@@ -1,0 +1,32 @@
+# VCS
+.git
+.gitignore
+
+# Node/Next frontend
+node_modules
+.next
+npm-debug.log*
+yarn.lock
+package-lock.json
+src/
+public/
+
+# Python
+__pycache__
+*.pyc
+.venv
+venv
+.coverage
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode
+
+# Docker/compose artifacts
+*.tar
+*.img
+
+# Env and secrets
+.env
+.env.*

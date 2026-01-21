@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Node
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.example
+.env.production
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+celery_logs.txt
+
+# Database
+*.db
+*.sqlite
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Build artifacts
+tsconfig.tsbuildinfo
+
+# Temporary and backup files
+*.bak
+*.tmp
+.cache/
+
+# DataVault specific ignores
+*.py
+!app/
+!next.config.js
+!tailwind.config.js
+!postcss.config.js
+!tsconfig.json
+!package.json
+!package-lock.json
+
+# Redundant directories
+src/
+
+# Exclude documentation and logs
+*.txt
+*.md
+!docs/
+!README.md
+!SETUP.md
+!PROJECT_SUMMARY.md
+!requirements.txt
+
+# Images
+!docs/images/*.png
+
+# Large data files
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!.eslintrc.json
