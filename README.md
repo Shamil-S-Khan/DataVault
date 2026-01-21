@@ -82,6 +82,9 @@ Each scraper implements:
 - Citation and usage trend analysis
 - Related dataset recommendations
 
+![Trend Detection](docs/images/trending.png)
+*Real-time trend scoring and popularity forecasting for datasets*
+
 **Bias & Fairness Analysis**
 - Demographic representation analysis
 - Dataset balance metrics
