@@ -62,34 +62,9 @@ tsconfig.tsbuildinfo
 *.tmp
 .cache/
 
-# DataVault specific ignores
-*.py
-!app/
-!next.config.js
-!tailwind.config.js
-!postcss.config.js
-!tsconfig.json
-!package.json
-!package-lock.json
-
-# Redundant directories
-src/
-
-# Exclude documentation and logs
-*.txt
-*.md
-!docs/
-!README.md
-!SETUP.md
-!PROJECT_SUMMARY.md
-!requirements.txt
-
-# Images
-!docs/images/*.png
-
-# Large data files
-*.json
-!package.json
-!package-lock.json
-!tsconfig.json
-!.eslintrc.json
+# Large test/output files
+trend_stats_output*.txt
+error_investigation.txt
+temp_datasets.json
+pwc_test.json
+scripts/archive/
