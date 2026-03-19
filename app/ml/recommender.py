@@ -1,15 +1,13 @@
 """
 ML-based recommendation system for datasets using semantic similarity.
-Uses Sentence Transformers to generate embeddings and find similar datasets.
+Uses FastEmbed vectors stored in a local Zvec-style HNSW collection
+through app.ml.semantic_search.
 """
-import asyncio
-import numpy as np
 from typing import List, Dict, Any, Optional
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import logging
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
+from app.ml.semantic_search import get_semantic_search
 
 logger = logging.getLogger(__name__)
 
@@ -22,67 +20,22 @@ class DatasetRecommender:
     
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
-        self.model = None
-        self._embeddings_cache = {}
-        
-    def _load_model(self):
-        """Lazy load the sentence transformer model."""
-        if self.model is None:
-            logger.info("Loading sentence transformer model...")
-            # Use lightweight model for production
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
-            logger.info("Model loaded successfully")
+        self._search_engine = None
+
+    async def _get_search_engine(self):
+        """Lazy-load semantic search engine instance."""
+        if self._search_engine is None:
+            self._search_engine = await get_semantic_search(self.db)
+        return self._search_engine
     
     async def generate_embeddings_batch(self, batch_size: int = 100):
         """
-        Generate embeddings for all datasets that don't have them yet.
-        Run this periodically or after new datasets are added.
+        Build/rebuild semantic index from current datasets.
+        The batch_size arg is accepted for API compatibility.
         """
-        self._load_model()
-        
-        logger.info("Starting batch embedding generation...")
-        
-        # Find datasets without embeddings
-        query = {
-            '$or': [
-                {'embedding_vector': {'$exists': False}},
-                {'embedding_vector': None}
-            ]
-        }
-        
-        cursor = self.db.datasets.find(query)
-        datasets_to_process = await cursor.to_list(length=None)
-        
-        logger.info(f"Found {len(datasets_to_process)} datasets needing embeddings")
-        
-        if not datasets_to_process:
-            logger.info("All datasets already have embeddings")
-            return
-        
-        # Process in batches
-        for i in range(0, len(datasets_to_process), batch_size):
-            batch = datasets_to_process[i:i + batch_size]
-            
-            # Prepare texts for embedding
-            texts = []
-            for dataset in batch:
-                # Combine multiple fields for richer embeddings
-                text = f"{dataset.get('display_name', '')} {dataset.get('canonical_name', '')} {dataset.get('description', '')}"
-                texts.append(text)
-            
-            # Generate embeddings
-            embeddings = self.model.encode(texts, show_progress_bar=True)
-            
-            # Update database
-            for dataset, embedding in zip(batch, embeddings):
-                await self.db.datasets.update_one(
-                    {'_id': dataset['_id']},
-                    {'$set': {'embedding_vector': embedding.tolist()}}
-                )
-            
-            logger.info(f"Processed batch {i//batch_size + 1}/{(len(datasets_to_process) + batch_size - 1)//batch_size}")
-        
-        logger.info("Batch embedding generation complete")
+        search_engine = await self._get_search_engine()
+        await search_engine.build_index()
+        logger.info("Semantic vector index rebuild complete")
     
     async def get_similar_datasets(
         self, 
@@ -101,70 +54,41 @@ class DatasetRecommender:
         Returns:
             List of similar datasets with similarity scores
         """
-        # Get target dataset
         target = await self.db.datasets.find_one({'_id': ObjectId(dataset_id)})
         if not target:
             raise ValueError(f"Dataset {dataset_id} not found")
-        
-        # Generate embedding if missing
-        if not target.get('embedding_vector'):
-            self._load_model()
-            text = f"{target.get('display_name', '')} {target.get('canonical_name', '')} {target.get('description', '')}"
-            embedding = self.model.encode([text])[0]
-            await self.db.datasets.update_one(
-                {'_id': target['_id']},
-                {'$set': {'embedding_vector': embedding.tolist()}}
-            )
-            target['embedding_vector'] = embedding.tolist()
-        
-        target_embedding = np.array(target['embedding_vector']).reshape(1, -1)
-        
-        # Build query for candidate datasets
-        query = {
-            '_id': {'$ne': target['_id']},  # Exclude self
-            'embedding_vector': {'$exists': True, '$ne': None}
-        }
-        
-        # Apply filters
-        if filters:
-            if filters.get('same_modality'):
-                query['modality'] = target.get('modality')
-            if filters.get('same_platform'):
-                query['source.platform'] = target.get('source', {}).get('platform')
-            if filters.get('domain'):
-                query['domain'] = filters['domain']
-        
-        # Get candidate datasets
-        candidates = await self.db.datasets.find(query).to_list(length=None)
-        
-        if not candidates:
-            logger.warning(f"No candidate datasets found for {dataset_id}")
-            return []
-        
-        # Calculate similarities
-        candidate_embeddings = np.array([c['embedding_vector'] for c in candidates])
-        similarities = cosine_similarity(target_embedding, candidate_embeddings)[0]
-        
-        # Sort by similarity
-        ranked_indices = np.argsort(similarities)[::-1][:limit]
-        
-        # Format results
+        search_engine = await self._get_search_engine()
+        similar_docs = await search_engine.find_similar_datasets(target['_id'], k=max(limit * 3, limit + 5))
+
         recommendations = []
-        for idx in ranked_indices:
-            candidate = candidates[idx]
+        for candidate in similar_docs:
+            if filters:
+                if filters.get('same_modality') and candidate.get('modality') != target.get('modality'):
+                    continue
+                if filters.get('same_platform'):
+                    c_platform = (candidate.get('source') or {}).get('platform')
+                    t_platform = (target.get('source') or {}).get('platform')
+                    if c_platform != t_platform:
+                        continue
+                if filters.get('domain') and candidate.get('domain') != filters.get('domain'):
+                    continue
+
             recommendations.append({
-                'id': str(candidate['_id']),
+                'id': str(candidate.get('_id')),
                 'name': candidate.get('display_name') or candidate.get('canonical_name'),
                 'canonical_name': candidate.get('canonical_name'),
                 'description': (candidate.get('description', '') or '')[:200],
                 'domain': candidate.get('domain'),
                 'modality': candidate.get('modality'),
-                'similarity_score': float(similarities[idx]),
+                'similarity_score': float(candidate.get('similarity_score', 0.0)),
                 'trend_score': candidate.get('trend_score', 0),
                 'source': candidate.get('source', {}),
-                'size': candidate.get('size', {})
+                'size': candidate.get('size', {}),
             })
-        
+
+            if len(recommendations) >= limit:
+                break
+
         return recommendations
     
     def _generate_match_reasons(self, dataset: Dict[str, Any], query: str, similarity_score: float) -> List[str]:
@@ -235,36 +159,33 @@ class DatasetRecommender:
         Returns:
             List of matching datasets with explanations
         """
-        self._load_model()
-        
-        # Generate query embedding
-        query_embedding = self.model.encode([query_text])[0].reshape(1, -1)
-        
-        # Build database query
-        db_query = {'embedding_vector': {'$exists': True, '$ne': None}}
-        if filters:
-            db_query.update(filters)
-        
-        # Get candidates
-        candidates = await self.db.datasets.find(db_query).to_list(length=None)
-        
+        search_engine = await self._get_search_engine()
+        candidates = await search_engine.search_datasets(query_text, k=max(limit * 4, limit + 10), threshold=0.0)
+
+        # Fallback: if semantic index is still warming/missing, use text search for responsiveness
         if not candidates:
-            return []
-        
-        # Calculate similarities
-        candidate_embeddings = np.array([c['embedding_vector'] for c in candidates])
-        similarities = cosine_similarity(query_embedding, candidate_embeddings)[0]
-        
-        # Sort and format
-        ranked_indices = np.argsort(similarities)[::-1][:limit]
-        
+            cursor = self.db.datasets.find({'$text': {'$search': query_text}}).sort('trend_score', -1).limit(max(limit * 4, limit + 10))
+            text_candidates = await cursor.to_list(length=max(limit * 4, limit + 10))
+            for item in text_candidates:
+                item['similarity_score'] = float(item.get('trend_score', 0.0)) * 0.6
+            candidates = text_candidates
+
         recommendations = []
-        for idx in ranked_indices:
-            candidate = candidates[idx]
-            similarity_score = float(similarities[idx])
+        for candidate in candidates:
+            if filters:
+                if filters.get('domain') and candidate.get('domain') != filters.get('domain'):
+                    continue
+                if filters.get('modality') and candidate.get('modality') != filters.get('modality'):
+                    continue
+                if filters.get('source.platform'):
+                    platform = (candidate.get('source') or {}).get('platform', '').lower()
+                    if platform != str(filters.get('source.platform', '')).lower():
+                        continue
+
+            similarity_score = float(candidate.get('similarity_score', 0.0))
             
             result = {
-                'id': str(candidate['_id']),
+                'id': str(candidate.get('_id')),
                 'name': candidate.get('display_name') or candidate.get('canonical_name'),
                 'canonical_name': candidate.get('canonical_name'),
                 'description': (candidate.get('description', '') or '')[:200],
@@ -283,6 +204,8 @@ class DatasetRecommender:
                 )
             
             recommendations.append(result)
+            if len(recommendations) >= limit:
+                break
         
         return recommendations
 

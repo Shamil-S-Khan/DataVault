@@ -14,7 +14,10 @@ interface QualityData {
     completeness?: number
     documentation?: number
     metadata_richness?: number
+    format_schema?: number
     community_validation?: number
+    weights?: Record<string, number>
+    is_cold_start?: boolean
 }
 
 interface QualityScoreProps {
@@ -171,7 +174,14 @@ export default function QualityScore({ datasetId, compact = false, showBreakdown
                             <QualityBar
                                 label="Metadata Richness"
                                 score={quality.metadata_richness}
-                                description="Number and value of metadata fields"
+                                description="Descriptive metadata fields (tags, version, schema)"
+                            />
+
+                            {/* Format & Schema */}
+                            <QualityBar
+                                label="Format & Schema"
+                                score={quality.format_schema}
+                                description="AI-ready formats, data density, column definitions"
                             />
 
                             {/* Community Validation */}
@@ -180,6 +190,12 @@ export default function QualityScore({ datasetId, compact = false, showBreakdown
                                 score={quality.community_validation}
                                 description="Downloads, likes, usage indicators"
                             />
+
+                            {quality.is_cold_start && (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 italic">
+                                    ⚡ Cold-start adjustment active — community weight redistributed for new dataset
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>

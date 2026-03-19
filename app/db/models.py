@@ -53,6 +53,11 @@ class Dataset(BaseModel):
     intelligence_updated_at: Optional[datetime] = None
     intelligence_version: str = "1.0"
     
+    # GQI (Global Quality Index) fields
+    gqi_score: Optional[float] = None
+    gqi_grade: Optional[str] = None
+    gqi_breakdown: Optional[Dict[str, Any]] = None
+    
     metadata: Dict[str, Any] = Field(default_factory=dict)
     embedding_vector: Optional[List[float]] = None
     

@@ -99,6 +99,7 @@ def _save_datasets_to_db(datasets: list) -> int:
     from app.db.connection import mongodb
     from bson import ObjectId
     from pymongo import UpdateOne
+    from app.ml.quality_scorer import quality_scorer
     
     saved_count = 0
     skipped_count = 0
@@ -140,6 +141,17 @@ def _save_datasets_to_db(datasets: list) -> int:
                     'source.platform': platform,
                     'source.platform_id': platform_id
                 }
+                
+                # Compute quality score at ingest time
+                try:
+                    quality_breakdown = quality_scorer.get_quality_breakdown(dataset)
+                    dataset['quality_score'] = quality_breakdown['overall']
+                    dataset['quality_breakdown'] = quality_breakdown
+                    dataset['quality_label'] = quality_scorer.get_quality_label(
+                        quality_breakdown['overall']
+                    )
+                except Exception as qe:
+                    logger.warning(f"Quality scoring failed for {canonical_name}: {qe}")
                 
                 # Add to bulk operations
                 bulk_operations.append(

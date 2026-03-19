@@ -30,6 +30,7 @@ interface Dataset {
 export default function ExplorePage() {
     const [datasets, setDatasets] = useState<Dataset[]>([])
     const [loading, setLoading] = useState(true)
+    const [fetchError, setFetchError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState('')
     const [selectedDomain, setSelectedDomain] = useState<string>('')
     const [selectedModality, setSelectedModality] = useState<string>('')
@@ -52,6 +53,7 @@ export default function ExplorePage() {
 
     const fetchDatasets = async () => {
         setLoading(true)
+        setFetchError(null)
         try {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
             const params = new URLSearchParams({
@@ -67,6 +69,9 @@ export default function ExplorePage() {
             })
 
             const response = await fetch(`${apiUrl}/api/datasets/trending?${params}`)
+            if (!response.ok) {
+                throw new Error(`Failed to fetch datasets (${response.status})`)
+            }
             const data = await response.json()
 
             setDatasets(data.datasets || [])
@@ -74,6 +79,7 @@ export default function ExplorePage() {
             setTotalPages(data.pagination?.pages || data.pages || Math.ceil((data.total || 0) / pageSize))
         } catch (error) {
             console.error('Failed to fetch datasets:', error)
+            setFetchError('Unable to load datasets right now. Please try again in a moment.')
         } finally {
             setLoading(false)
         }
@@ -275,6 +281,16 @@ export default function ExplorePage() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                         <LoadingCard count={pageSize} />
                     </div>
+                ) : fetchError ? (
+                    <EmptyState
+                        icon="⚠️"
+                        title="Could not load datasets"
+                        description={fetchError}
+                        action={{
+                            label: 'Retry',
+                            onClick: fetchDatasets
+                        }}
+                    />
                 ) : datasets.length === 0 ? (
                     <EmptyState
                         icon="🔍"

@@ -1,7 +1,21 @@
 """
 Dataset quality scoring system.
 Analyzes documentation, metadata completeness, and text quality.
+
+.. deprecated::
+    This module is DEPRECATED.  All quality scoring must go through
+    ``app.ml.quality_scorer`` (the Metadata-Only Tier 1 scorer),
+    which is the sole source of truth for the dataset quality API.
+    Do NOT import from this module in new code.  It will be removed
+    in a future release.
 """
+import warnings
+warnings.warn(
+    "app.ml.quality_scoring is deprecated. "
+    "Use app.ml.quality_scorer instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 from typing import Dict, Any, Optional
 import logging
 import spacy

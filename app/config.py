@@ -3,6 +3,7 @@ Centralized configuration management using Pydantic Settings.
 Loads environment variables and provides type-safe configuration access.
 """
 from pydantic_settings import BaseSettings
+from pydantic import field_validator, model_validator
 from typing import List, Optional
 from functools import lru_cache
 
@@ -16,8 +17,10 @@ class Settings(BaseSettings):
     max_mongodb_connections: int = 20
     
     # Redis Configuration
-    redis_url: str
+    redis_url: Optional[str] = None
     max_redis_connections: int = 10
+    upstash_redis_rest_url: Optional[str] = None
+    upstash_redis_rest_token: Optional[str] = None
     
     # API Keys - Data Sources
     kaggle_username: Optional[str] = None
@@ -58,7 +61,7 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = None
     
     # NextAuth
-    nextauth_secret: str
+    nextauth_secret: str = "dev-secret"
     nextauth_url: str = "http://localhost:3000"
     
     # OAuth Providers
@@ -70,6 +73,28 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _parse_debug(cls, value):
+        """Accept broader env values (e.g., 'release') for DEBUG."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "development", "dev"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return bool(value)
+
+    @model_validator(mode="after")
+    def _ensure_redis_url(self):
+        """Backwards-compatible Redis resolution for local/dev envs."""
+        if not self.redis_url:
+            self.redis_url = "redis://localhost:6379"
+        return self
         
     @property
     def is_production(self) -> bool:

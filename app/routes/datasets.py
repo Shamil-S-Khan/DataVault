@@ -996,6 +996,42 @@ async def get_dataset_fitness_score(dataset_id: str):
     }
 
 
+@router.get("/{dataset_id}/gqi")
+async def get_dataset_gqi(dataset_id: str):
+    """
+    Get Global Quality Index (GQI) for a dataset.
+
+    Returns a 0-1 composite score with breakdown across:
+    - Structural Clarity (20%)
+    - Representational Entropy (20%)
+    - Academic Authority (20%)
+    - Operational Fitness (40%)
+    Plus label reliability multiplier and synthetic resilience context.
+    """
+    try:
+        ObjectId(dataset_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+
+    from app.db.connection import mongodb
+    from app.ml.composite_scorer import composite_scorer
+
+    dataset = await mongodb.db.datasets.find_one({'_id': ObjectId(dataset_id)})
+
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    # Calculate GQI
+    gqi_result = composite_scorer.calculate_gqi(dataset)
+
+    return {
+        'status': 'success',
+        'dataset_id': dataset_id,
+        'dataset_name': dataset.get('display_name') or dataset.get('canonical_name'),
+        'gqi': gqi_result
+    }
+
+
 @router.get("/{dataset_id}/license")
 async def get_dataset_license_analysis(dataset_id: str):
     """

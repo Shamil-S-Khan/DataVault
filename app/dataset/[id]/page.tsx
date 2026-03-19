@@ -22,6 +22,7 @@ import VersionTimeline from '../../components/VersionTimeline'
 import SyntheticSuitability from '../../components/SyntheticSuitability'
 import DatasetCardGen from '../../components/DatasetCardGen'
 import QualityScore from '../../components/QualityScore'
+import GQIScore from '../../components/GQIScore'
 import MLRecommendations from '../../components/MLRecommendations'
 
 interface Dataset {
@@ -1243,7 +1244,10 @@ export default function DatasetDetailPage() {
                 {/* Intelligence Tab Content */}
                 {activeTab === 'intelligence' && (
                     <div className="space-y-6">
-                        {/* NEW: Quality Score & ML Recommendations */}
+                        {/* Global Quality Index (GQI) */}
+                        <GQIScore datasetId={dataset.id} />
+
+                        {/* Quality Score & ML Recommendations */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <QualityScore datasetId={dataset.id} showBreakdown={true} />
                             <MLRecommendations datasetId={dataset.id} limit={5} />
