@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import dynamic from 'next/dynamic'
-import { MagnifyingGlassIcon, AdjustmentsHorizontalIcon, FunnelIcon, SparklesIcon, ChartBarIcon } from '@heroicons/react/24/outline'
-import { useRouter } from 'next/navigation'
+import { FunnelIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 import DatasetCard from '../components/DatasetCard'
 import FilterBar from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
@@ -11,12 +9,7 @@ import LoadingCard from '../components/LoadingCard'
 import Pagination from '../components/Pagination'
 import LayoutHeader from '../components/LayoutHeader'
 import SortDropdown, { SortField, SortOrder } from '../components/SortDropdown'
-
-// Lazy load SemanticSearch for better performance
-const SemanticSearch = dynamic(() => import('../components/SemanticSearch'), {
-    loading: () => <div className="animate-pulse h-12 bg-gray-200 dark:bg-gray-700 rounded-lg" />,
-    ssr: false
-})
+import SmartSearch from '../components/SmartSearch'
 
 interface Dataset {
     id: string
@@ -25,10 +18,14 @@ interface Dataset {
     domain?: string
     modality?: string
     trend_score?: number
+    platform?: string
+    gqi_score?: number
 }
 
 export default function ExplorePage() {
     const [datasets, setDatasets] = useState<Dataset[]>([])
+    const [searchResults, setSearchResults] = useState<Dataset[] | null>(null)
+    const [searchIntent, setSearchIntent] = useState<any>(null)
     const [loading, setLoading] = useState(true)
     const [fetchError, setFetchError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState('')
@@ -48,14 +45,17 @@ export default function ExplorePage() {
     }
 
     useEffect(() => {
-        fetchDatasets()
-    }, [selectedDomain, selectedModality, selectedSource, selectedQuality, currentPage, pageSize, searchQuery, sortBy, sortOrder])
+        // Only fetch trending if not in search mode
+        if (!searchResults) {
+            fetchDatasets()
+        }
+    }, [selectedDomain, selectedModality, selectedSource, selectedQuality, currentPage, pageSize, searchQuery, sortBy, sortOrder, searchResults])
 
     const fetchDatasets = async () => {
         setLoading(true)
         setFetchError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const params = new URLSearchParams({
                 page: currentPage.toString(),
                 limit: pageSize.toString(),
@@ -85,18 +85,14 @@ export default function ExplorePage() {
         }
     }
 
-    const handleSearch = (e: React.FormEvent) => {
-        e.preventDefault()
-        setCurrentPage(1)
-        fetchDatasets()
-    }
-
     const handleClearFilters = () => {
         setSelectedDomain('')
         setSelectedModality('')
         setSelectedSource('')
         setSelectedQuality('')
         setSearchQuery('')
+        setSearchResults(null)
+        setSearchIntent(null)
         setSortBy('trending')
         setSortOrder('desc')
         setCurrentPage(1)
@@ -105,7 +101,7 @@ export default function ExplorePage() {
     const handleSortChange = (field: SortField, order: SortOrder) => {
         setSortBy(field)
         setSortOrder(order)
-        setCurrentPage(1) // Reset to first page when sorting changes
+        setCurrentPage(1)
     }
 
     const handlePageChange = (page: number) => {
@@ -155,6 +151,11 @@ export default function ExplorePage() {
         { value: 'poor', label: 'Poor (<40%)' },
     ]
 
+    const displayDatasets = searchResults 
+        ? searchResults.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+        : datasets
+    const displayTotal = searchResults ? searchResults.length : totalDatasets
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
             {/* Header */}
@@ -172,54 +173,35 @@ export default function ExplorePage() {
                             Discover Your Perfect Dataset
                         </h1>
                         <p className="text-xl text-primary-100 max-w-2xl mx-auto">
-                            Browse through {totalDatasets > 0 ? totalDatasets.toLocaleString() : '1000+'} datasets with advanced filtering and search
+                            Browse through {totalDatasets > 0 ? totalDatasets.toLocaleString() : '1000+'} datasets with AI-powered search
                         </p>
                     </div>
                 </div>
             </section>
 
-            {/* NEW: Semantic Search Section */}
-            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8 mb-6">
-                <div className="bg-gradient-to-r from-primary-500 to-purple-600 rounded-2xl p-6 shadow-lg border border-primary-400 mb-4">
-                    <div className="flex items-center gap-2 mb-3">
-                        <SparklesIcon className="w-6 h-6 text-white" />
-                        <h2 className="text-xl font-bold text-white">AI-Powered Semantic Search</h2>
-                        <span className="px-2 py-0.5 bg-white text-primary-600 text-xs font-semibold rounded-full">
-                            NEW
-                        </span>
-                    </div>
-                    <p className="text-primary-100 text-sm mb-4">
-                        Search using natural language. The AI understands context and meaning, not just keywords.
-                    </p>
-                    <SemanticSearch />
-                </div>
-            </section>
-
-            {/* Search Bar - Traditional */}
-            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center gap-2 mb-3">
-                        <MagnifyingGlassIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                        <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400">Traditional Keyword Search</h3>
-                    </div>
-                    <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
-                        <div className="flex-1 relative">
-                            <input
-                                type="text"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                placeholder="Search by name, description, or tags..."
-                                className="w-full px-4 py-3 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-xl text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                            />
-                        </div>
-                        <button
-                            type="submit"
-                            className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all duration-200 hover:scale-105 whitespace-nowrap"
-                        >
-                            Search
-                        </button>
-                    </form>
-                </div>
+            {/* Smart Search Bar */}
+            <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8 mb-8">
+                <SmartSearch
+                    onSearch={(q) => {
+                        setSearchQuery(q)
+                        setCurrentPage(1)
+                    }}
+                    onResults={(results, intent, total) => {
+                        setSearchResults(results.length > 0 || intent ? results : null)
+                        setSearchIntent(intent)
+                        if (results.length > 0) {
+                            setTotalDatasets(total)
+                            setTotalPages(Math.ceil(total / pageSize))
+                        }
+                    }}
+                    filters={{
+                        domain: selectedDomain,
+                        modality: selectedModality,
+                        platform: selectedSource
+                    }}
+                    setLoading={setLoading}
+                    className="shadow-2xl"
+                />
             </section>
 
             {/* Analytics Link */}
@@ -265,19 +247,21 @@ export default function ExplorePage() {
                         selectedQuality={selectedQuality}
                         onQualityChange={setSelectedQuality}
                         onClearFilters={handleClearFilters}
-                        datasetCount={totalDatasets}
+                        datasetCount={displayTotal}
                     />
-                    <SortDropdown
-                        sortBy={sortBy}
-                        sortOrder={sortOrder}
-                        onSortChange={handleSortChange}
-                    />
+                    {!searchResults && (
+                        <SortDropdown
+                            sortBy={sortBy}
+                            sortOrder={sortOrder}
+                            onSortChange={handleSortChange}
+                        />
+                    )}
                 </div>
             </section>
 
             {/* Dataset Grid */}
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
-                {loading ? (
+                {loading && !searchResults ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                         <LoadingCard count={pageSize} />
                     </div>
@@ -291,20 +275,33 @@ export default function ExplorePage() {
                             onClick: fetchDatasets
                         }}
                     />
-                ) : datasets.length === 0 ? (
+                ) : displayDatasets.length === 0 ? (
                     <EmptyState
                         icon="🔍"
                         title="No datasets found"
-                        description="Try adjusting your filters or search query"
+                        description={searchQuery ? `We couldn't find anything for "${searchQuery}"` : "Try adjusting your filters"}
                         action={{
-                            label: 'Clear Filters',
+                            label: 'Clear Search',
                             onClick: handleClearFilters
                         }}
                     />
                 ) : (
                     <>
+                        {searchResults && (
+                            <div className="mb-6 flex items-center justify-between">
+                                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                                    Search Results ({totalDatasets})
+                                </h3>
+                                <button 
+                                    onClick={handleClearFilters}
+                                    className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                                >
+                                    Clear Search
+                                </button>
+                            </div>
+                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                            {datasets.map((dataset) => (
+                            {displayDatasets.map((dataset) => (
                                 <DatasetCard
                                     key={dataset.id}
                                     dataset={dataset}
@@ -313,12 +310,12 @@ export default function ExplorePage() {
                             ))}
                         </div>
 
-                        {/* Pagination - Always show when we have datasets */}
-                        {datasets.length > 0 && (
+                        {/* Pagination - Show for both search and trending */}
+                        {((!searchResults && datasets.length > 0) || (searchResults && searchResults.length > pageSize)) && (
                             <Pagination
                                 currentPage={currentPage}
-                                totalPages={totalPages}
-                                totalItems={totalDatasets}
+                                totalPages={searchResults ? Math.ceil(searchResults.length / pageSize) : totalPages}
+                                totalItems={searchResults ? searchResults.length : totalDatasets}
                                 itemsPerPage={pageSize}
                                 onPageChange={handlePageChange}
                                 onPageSizeChange={handlePageSizeChange}
@@ -330,3 +327,4 @@ export default function ExplorePage() {
         </div>
     )
 }
+

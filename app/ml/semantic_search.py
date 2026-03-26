@@ -1,429 +1,216 @@
 """
-Semantic search using FastEmbed vectors and a local Zvec-style
-memory-mapped HNSW index.
-
-This replaces FAISS + sentence-transformers for semantic retrieval paths.
+Upgraded semantic search implementation using BGE-base-v1.5.
+Supports query-specific instruction prefixes and incremental FAISS updates.
 """
-from typing import List, Dict, Any, Optional, Tuple
-import asyncio
-import numpy as np
-from fastembed import TextEmbedding
-import hnswlib
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from bson import ObjectId
+import os
 import logging
 import pickle
-import os
-import time
+import numpy as np
+import faiss
+from typing import List, Dict, Any, Optional, Tuple
+from fastembed import TextEmbedding
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
+DIMENSION = 384
+INDEX_PATH = "faiss_index.bin"
+MAPPING_PATH = "faiss_mapping.pkl"
+QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
 class SemanticSearch:
-    """Semantic search engine using FastEmbed + local Zvec-style HNSW."""
+    """Semantic search engine using BGE embeddings and FAISS."""
     
-    def __init__(
-        self,
-        db: AsyncIOMotorDatabase,
-        model_name: str = "BAAI/bge-small-en-v1.5",
-        index_path: str = "zvec_datasets"
-    ):
-        self.db = db
-        self.model_name = os.getenv("FASTEMBED_MODEL", model_name)
-        self.index_path = os.getenv("ZVEC_COLLECTION_PATH", index_path)
-        self.max_elements = int(os.getenv("ZVEC_MAX_ELEMENTS", "250000"))
-        self.ef_construction = int(os.getenv("ZVEC_EF_CONSTRUCTION", "200"))
-        self.M = int(os.getenv("ZVEC_M", "16"))
-        self.ef_search = int(os.getenv("ZVEC_EF_SEARCH", "64"))
+    _instance = None
 
-        logger.info(f"Loading FastEmbed model: {self.model_name}")
-        self.model = TextEmbedding(model_name=self.model_name)
-        probe = self._encode_texts(["semantic-probe"])
-        self.embedding_dim = probe.shape[1]
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(SemanticSearch, cls).__new__(cls)
+        return cls._instance
 
-        # Local Zvec-like HNSW collection
+    def __init__(self):
+        if hasattr(self, 'initialized') and self.initialized:
+            return
+            
+        self.model = None
         self.index = None
-        self.dataset_ids: List[str] = []
-        self.label_to_dataset_id: Dict[int, str] = {}
-        self.dataset_id_to_label: Dict[str, int] = {}
-        self.payloads: Dict[str, Dict[str, Any]] = {}
-        self._build_lock = asyncio.Lock()
-        self._is_building = False
-        self._is_ready = False
-        self._last_not_ready_log_ts = 0.0
-        self._not_ready_log_interval_sec = 30.0
-
-        index_dir = os.path.dirname(self.index_path)
-        if index_dir:
-            os.makedirs(index_dir, exist_ok=True)
-
-    def _encode_texts(self, texts: List[str]) -> np.ndarray:
-        """Encode text batch to dense vectors using FastEmbed."""
-        normalized = [((text or "").strip() or " ") for text in texts]
-        vectors = list(self.model.embed(normalized))
-        if not vectors:
-            return np.empty((0, self.embedding_dim), dtype=np.float32)
-        return np.asarray(vectors, dtype=np.float32)
-
-    @staticmethod
-    def _normalize(vectors: np.ndarray) -> np.ndarray:
-        """L2-normalize vectors for cosine similarity over HNSW."""
-        if vectors.size == 0:
-            return vectors
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return vectors / norms
-
-    @staticmethod
-    def _build_text(dataset: Dict[str, Any]) -> str:
-        """Build semantic text representation for a dataset."""
-        text = f"{dataset.get('display_name', '')} {dataset.get('canonical_name', '')} {dataset.get('description', '')}"
-        if dataset.get('llm_summary'):
-            text += f" {dataset['llm_summary']}"
-        return text.strip() or "dataset"
-    
-    async def build_index(self, limit: Optional[int] = None):
-        """
-        Build local Zvec-style HNSW index from all datasets.
+        self.id_map = []  # List of MongoDB IDs mapped to FAISS indices
+        self.initialized = True
         
-        Args:
-            limit: Optional limit on number of datasets
-        """
-        if self._is_building:
-            return
+        # Load index if exists
+        self._load_index()
 
-        async with self._build_lock:
-            if self._is_building:
-                return
-            self._is_building = True
+    def _ensure_model(self):
+        """Lazy-load the embedding model."""
+        if self.model is None:
+            logger.info(f"Loading embedding model: {MODEL_NAME} using FastEmbed")
+            self.model = TextEmbedding(model_name=MODEL_NAME)
+    
+    def _load_index(self):
+        """Load index and mapping from disk."""
+        if os.path.exists(INDEX_PATH) and os.path.exists(MAPPING_PATH):
             try:
-                logger.info("Building Zvec-style HNSW index...")
-            
-                # Fetch datasets
-                cursor = self.db.datasets.find({})
-                if limit:
-                    cursor = cursor.limit(limit)
-                
-                datasets = await cursor.to_list(length=limit if limit else None)
-                
-                if not datasets:
-                    logger.warning("No datasets found for indexing")
-                    self._is_ready = False
-                    return
-            
-                # Prepare texts, ids, and payloads
-                texts = []
-                dataset_ids = []
-                payloads = {}
-                
-                for dataset in datasets:
-                    text = self._build_text(dataset)
-                    texts.append(text)
-                    dataset_id = str(dataset['_id'])
-                    dataset_ids.append(dataset_id)
-                    payloads[dataset_id] = {
-                        '_id': dataset_id,
-                        'canonical_name': dataset.get('canonical_name'),
-                        'display_name': dataset.get('display_name'),
-                        'description': dataset.get('description', ''),
-                        'domain': dataset.get('domain'),
-                        'modality': dataset.get('modality'),
-                        'trend_score': dataset.get('trend_score'),
-                        'quality_label': dataset.get('quality_label'),
-                        'source': dataset.get('source', {}),
-                        'size': dataset.get('size', {}),
-                    }
-            
-                # Generate embeddings
-                logger.info(f"Generating embeddings for {len(texts)} datasets...")
-                embeddings = self._normalize(self._encode_texts(texts))
-
-                # Create local HNSW index
-                logger.info("Creating local HNSW collection...")
-                self.index = hnswlib.Index(space='cosine', dim=self.embedding_dim)
-                max_elements = max(self.max_elements, len(dataset_ids) + 1000)
-                self.index.init_index(
-                    max_elements=max_elements,
-                    ef_construction=self.ef_construction,
-                    M=self.M
-                )
-                self.index.set_ef(self.ef_search)
-
-                labels = np.arange(len(dataset_ids), dtype=np.int64)
-                self.index.add_items(embeddings, labels)
-                self.dataset_ids = dataset_ids
-                self.label_to_dataset_id = {int(i): dataset_ids[i] for i in range(len(dataset_ids))}
-                self.dataset_id_to_label = {dataset_ids[i]: int(i) for i in range(len(dataset_ids))}
-                self.payloads = payloads
-
-                logger.info(f"HNSW index built with {len(dataset_ids)} vectors")
-                
-                # Save index
-                self.save_index()
-                self._is_ready = True
+                self.index = faiss.read_index(INDEX_PATH)
+                with open(MAPPING_PATH, 'rb') as f:
+                    self.id_map = pickle.load(f)
+                logger.info(f"Loaded FAISS index with {len(self.id_map)} items")
             except Exception as e:
-                self._is_ready = False
-                logger.error(f"Error building semantic index: {e}")
-            finally:
-                self._is_building = False
-    
-    def save_index(self):
-        """Persist local Zvec-style HNSW index and metadata to disk."""
-        if self.index is None:
-            logger.warning("No index to save")
-            return
-        
-        try:
-            self.index.save_index(self.index_path)
+                logger.error(f"Error loading FAISS index: {e}")
+                self._create_empty_index()
+        else:
+            self._create_empty_index()
 
-            with open(f"{self.index_path}.ids", 'wb') as f:
-                pickle.dump(self.dataset_ids, f)
-            with open(f"{self.index_path}.mappings", 'wb') as f:
-                pickle.dump(
-                    {
-                        'label_to_dataset_id': self.label_to_dataset_id,
-                        'dataset_id_to_label': self.dataset_id_to_label,
-                        'payloads': self.payloads,
-                    },
-                    f,
-                )
-            
-            logger.info(f"Index saved to {self.index_path}")
-            
-        except Exception as e:
-            logger.error(f"Error saving index: {e}")
-    
-    def load_index(self) -> bool:
-        """
-        Load local Zvec-style HNSW index from disk.
-        
-        Returns:
-            True if successful
-        """
-        if not os.path.exists(self.index_path):
-            logger.warning(f"Index file not found: {self.index_path}")
-            return False
-        
-        try:
-            self.index = hnswlib.Index(space='cosine', dim=self.embedding_dim)
-            self.index.load_index(self.index_path, max_elements=self.max_elements)
-            self.index.set_ef(self.ef_search)
+    def _create_empty_index(self):
+        """Initialize a new empty FAISS index."""
+        # IndexFlatIP = Inner Product similarity (cosine similarity for normalized vectors)
+        self.index = faiss.IndexFlatIP(DIMENSION)
+        self.id_map = []
+        logger.info("Created new empty FAISS index")
 
-            with open(f"{self.index_path}.ids", 'rb') as f:
-                self.dataset_ids = pickle.load(f)
-            mappings_path = f"{self.index_path}.mappings"
-            if os.path.exists(mappings_path):
-                with open(mappings_path, 'rb') as f:
-                    mappings = pickle.load(f)
-                    self.label_to_dataset_id = mappings.get('label_to_dataset_id', {})
-                    self.dataset_id_to_label = mappings.get('dataset_id_to_label', {})
-                    self.payloads = mappings.get('payloads', {})
-            else:
-                self.label_to_dataset_id = {
-                    int(i): dataset_id for i, dataset_id in enumerate(self.dataset_ids)
-                }
-                self.dataset_id_to_label = {
-                    dataset_id: int(i) for i, dataset_id in enumerate(self.dataset_ids)
-                }
-                self.payloads = {}
-            
-            logger.info(f"Index loaded from {self.index_path} ({len(self.dataset_ids)} vectors)")
-            self._is_ready = True
-            return True
-            
+    def _save_index(self):
+        """Persist index and mapping to disk."""
+        try:
+            faiss.write_index(self.index, INDEX_PATH)
+            with open(MAPPING_PATH, 'wb') as f:
+                pickle.dump(self.id_map, f)
+            logger.debug(f"Saved FAISS index to {INDEX_PATH}")
         except Exception as e:
-            logger.error(f"Error loading index: {e}")
-            return False
-    
-    def search(
-        self,
-        query: str,
-        k: int = 10,
-        threshold: float = 0.0
-    ) -> List[Tuple[str, float]]:
-        """
-        Search for similar datasets.
-        
-        Args:
-            query: Search query
-            k: Number of results
-            threshold: Minimum similarity threshold
-            
-        Returns:
-            List of (dataset_id, similarity_score) tuples
-        """
-        if self.index is None:
-            now = time.time()
-            if now - self._last_not_ready_log_ts >= self._not_ready_log_interval_sec:
-                if self._is_building:
-                    logger.info("Semantic index build in progress; semantic search will use fallback until ready")
-                else:
-                    logger.warning("Semantic index not ready; semantic search will use fallback")
-                self._last_not_ready_log_ts = now
+            logger.error(f"Error saving FAISS index: {e}")
+
+    def embed_query(self, query: str) -> np.ndarray:
+        """Embed a search query with the required BGE prefix."""
+        self._ensure_model()
+        full_query = f"{QUERY_PREFIX}{query}"
+        # FastEmbed returns a generator of numpy arrays
+        embeddings = list(self.model.embed([full_query]))
+        return embeddings[0].astype('float32')
+
+    def embed_document(self, text: str) -> np.ndarray:
+        """Embed a document string (no prefix)."""
+        self._ensure_model()
+        embeddings = list(self.model.embed([text]))
+        return embeddings[0].astype('float32')
+
+    async def search(self, query: str, top_k: int = 100) -> List[Dict[str, Any]]:
+        """Perform semantic search and return ranked results."""
+        if self.index.ntotal == 0:
             return []
+
+        query_vector = self._ensure_2d(self.embed_query(query))
         
-        query_embedding = self._normalize(self._encode_texts([query]))
-        labels, distances = self.index.knn_query(query_embedding, k=k)
+        # Search FAISS
+        scores, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
         
-        # Format results
         results = []
-        for idx, dist in zip(labels[0], distances[0]):
-            idx = int(idx)
-            dataset_id = self.label_to_dataset_id.get(idx)
-            if not dataset_id:
-                continue
-            similarity = 1.0 - float(dist)
-            if similarity >= threshold:
-                results.append((dataset_id, similarity))
+        for score, idx in zip(scores[0], indices[0]):
+            if idx != -1 and idx < len(self.id_map):
+                results.append({
+                    "id": str(self.id_map[idx]),
+                    "score": float(score)
+                })
         
         return results
-    
-    async def search_datasets(
-        self,
-        query: str,
-        k: int = 10,
-        threshold: float = 0.3
-    ) -> List[Dict[str, Any]]:
-        """
-        Search datasets and return full documents.
-        
-        Args:
-            query: Search query
-            k: Number of results
-            threshold: Minimum similarity threshold
-            
-        Returns:
-            List of dataset documents with similarity scores
-        """
-        # Search index
-        results = self.search(query, k, threshold)
-        
-        if not results:
+
+    def add_to_index(self, dataset_id: str, text: str):
+        """Add a document to the index incrementally."""
+        # Avoid duplicates in the ID map if possible, though FAISS allows it
+        if dataset_id in self.id_map:
+            logger.debug(f"ID {dataset_id} already in index, skipping incremental add")
+            return
+
+        vector = self._ensure_2d(self.embed_document(text))
+        self.index.add(vector)
+        self.id_map.append(dataset_id)
+        self._save_index()
+        logger.info(f"Added dataset {dataset_id} to FAISS index. Total: {self.index.ntotal}")
+
+    async def find_similar_datasets(self, dataset_id: Any, k: int = 5, db: Any = None) -> List[Dict[str, Any]]:
+        """Find datasets similar to a given dataset ID."""
+        target_id = str(dataset_id)
+        if target_id not in self.id_map:
+            logger.warning(f"Dataset {target_id} not in semantic index")
             return []
 
-        # Fast path: serve from in-memory payloads (no per-query Mongo round trip)
-        enriched_results = []
-        missing_ids: List[str] = []
-        for dataset_id, score in results:
-            payload = self.payloads.get(dataset_id)
-            if payload:
-                dataset = dict(payload)
-                dataset['similarity_score'] = score
-                enriched_results.append(dataset)
-            else:
-                missing_ids.append(dataset_id)
-
-        # Fallback for any payload misses
-        if missing_ids:
-            object_ids = [ObjectId(dataset_id) for dataset_id in missing_ids]
-            datasets = await self.db.datasets.find({'_id': {'$in': object_ids}}).to_list(length=len(missing_ids))
-            dataset_map = {str(d['_id']): d for d in datasets}
-            for dataset_id, score in results:
-                if dataset_id in missing_ids and dataset_id in dataset_map:
-                    dataset = dict(dataset_map[dataset_id])
-                    dataset['similarity_score'] = score
-                    enriched_results.append(dataset)
+        idx = self.id_map.index(target_id)
         
-        return enriched_results
-    
-    async def find_similar_datasets(
-        self,
-        dataset_id: ObjectId,
-        k: int = 5
-    ) -> List[Dict[str, Any]]:
-        """
-        Find datasets similar to a given dataset.
-        
-        Args:
-            dataset_id: Reference dataset ID
-            k: Number of similar datasets to return
-            
-        Returns:
-            List of similar datasets
-        """
-        # Get reference dataset
-        dataset = await self.db.datasets.find_one({'_id': dataset_id})
-        
-        if not dataset:
+        # Explicitly fetch the vector from FAISS by ID if possible
+        # Since it's IndexFlatIP, we can reconstruct if it's not too large
+        try:
+            target_vector = self._ensure_2d(self.index.reconstruct(idx))
+        except:
+            # Fallback if reconstruct is not supported by this index type
+            logger.error("FAISS index does not support reconstruction")
             return []
+
+        # Search for similar (k+1 because the query itself will be top match)
+        scores, indices = self.index.search(target_vector, k + 1)
         
-        # Create query from dataset
-        query = f"{dataset.get('canonical_name', '')} {dataset.get('description', '')}"
+        results = []
+        for score, i in zip(scores[0], indices[0]):
+            res_id = str(self.id_map[i])
+            if res_id != target_id:
+                # We need to fetch metadata from DB if we want full objects
+                if db is not None:
+                    from bson import ObjectId
+                    ds = await db.datasets.find_one({"_id": ObjectId(res_id)})
+                    if ds:
+                        ds["similarity_score"] = float(score)
+                        results.append(ds)
+                else:
+                    results.append({"id": res_id, "similarity_score": float(score)})
+            
+            if len(results) >= k:
+                break
+                
+        return results
+
+    def _ensure_2d(self, vector: np.ndarray) -> np.ndarray:
+        """FAISS expects (n, d) array."""
+        if len(vector.shape) == 1:
+            return vector.reshape(1, -1)
+        return vector
+
+    async def rebuild_from_mongo(self, db):
+        """Rebuild the entire index from MongoDB datasets."""
+        logger.info("Rebuilding FAISS index from MongoDB...")
+        cursor = db.datasets.find({}, {"_id": 1, "canonical_name": 1, "description": 1, "domain": 1, "modality": 1})
         
-        # Search (k+1 to exclude the dataset itself)
-        results = await self.search_datasets(query, k=k+1, threshold=0.0)
+        all_ids = []
+        all_texts = []
         
-        # Filter out the reference dataset
-        similar = [r for r in results if str(r['_id']) != str(dataset_id)]
-        
-        return similar[:k]
-    
-    async def update_index_incremental(self, dataset_id: ObjectId):
-        """
-        Add a single dataset to the index.
-        
-        Args:
-            dataset_id: Dataset ID to add
-        """
-        if self.index is None:
-            logger.warning("Index not initialized, cannot add incrementally")
+        async for ds in cursor:
+            text = f"{ds.get('canonical_name', '')} {ds.get('description', '')} {ds.get('domain', '')} {ds.get('modality', '')}"
+            all_ids.append(str(ds['_id']))
+            all_texts.append(text)
+            
+        if not all_texts:
+            logger.warning("No datasets found to index")
             return
+
+        self._ensure_model()
+        logger.info(f"Embedding {len(all_texts)} datasets for rebuild using FastEmbed...")
         
-        # Get dataset
-        dataset = await self.db.datasets.find_one({'_id': dataset_id})
+        # TextEmbedding.embed returns a generator, we convert to a single numpy array
+        # FastEmbed handles batching internally
+        embeddings_gen = self.model.embed(all_texts, batch_size=64)
+        embeddings = np.array(list(embeddings_gen))
         
-        if not dataset:
-            return
-        
-        dataset_id_str = str(dataset_id)
-        if dataset_id_str in self.dataset_id_to_label:
-            await self.build_index()
-            return
+        self._create_empty_index()
+        self.index.add(embeddings.astype('float32'))
+        self.id_map = all_ids
+        self._save_index()
+        logger.info("FAISS index rebuild complete")
 
-        if len(self.dataset_ids) + 1 > self.max_elements:
-            await self.build_index()
-            return
+# Singleton provider
+_engine = None
 
-        text = self._build_text(dataset)
-        embedding = self._normalize(self._encode_texts([text]))
-
-        new_label = len(self.dataset_ids)
-        self.index.add_items(embedding, np.array([new_label], dtype=np.int64))
-        self.dataset_ids.append(dataset_id_str)
-        self.label_to_dataset_id[new_label] = dataset_id_str
-        self.dataset_id_to_label[dataset_id_str] = new_label
-        self.payloads[dataset_id_str] = {
-            '_id': dataset_id_str,
-            'canonical_name': dataset.get('canonical_name'),
-            'display_name': dataset.get('display_name'),
-            'description': dataset.get('description', ''),
-            'domain': dataset.get('domain'),
-            'modality': dataset.get('modality'),
-            'trend_score': dataset.get('trend_score'),
-            'quality_label': dataset.get('quality_label'),
-            'source': dataset.get('source', {}),
-            'size': dataset.get('size', {}),
-        }
-
-        logger.info(f"Added dataset {dataset_id} to index")
-        self.save_index()
-
-
-# Global semantic search instance
-semantic_search = None
-
-
-async def get_semantic_search(db: AsyncIOMotorDatabase) -> SemanticSearch:
-    """Get or create semantic search instance."""
-    global semantic_search
-    
-    if semantic_search is None:
-        semantic_search = SemanticSearch(db)
-        
-        # Try to load existing index
-        if not semantic_search.load_index():
-            # Build new index in background to avoid first-request latency spikes
-            logger.warning("Semantic index missing; starting background build")
-            asyncio.create_task(semantic_search.build_index())
-    
-    return semantic_search
+async def get_semantic_search(db=None) -> SemanticSearch:
+    """Provider function for SemanticSearch singleton."""
+    global _engine
+    if _engine is None:
+        _engine = SemanticSearch()
+        # If the index is empty, try to rebuild it if db is provided
+        if _engine.index.ntotal == 0 and db is not None:
+            await _engine.rebuild_from_mongo(db)
+    return _engine

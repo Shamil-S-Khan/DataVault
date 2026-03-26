@@ -63,7 +63,7 @@ export default function AnalyticsDashboard() {
         setLoading(true)
         setError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             
             // Fetch overview
             const overviewRes = await fetch(`${apiUrl}/api/analytics/overview`)

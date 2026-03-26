@@ -22,6 +22,7 @@ def get_all_scrapers():
     from app.scrapers.datagov import DataGovScraper
     from app.scrapers.dataverse import HarvardDataverseScraper
     from app.scrapers.curated import CuratedDatasetsScraper
+    from app.scrapers.papers_with_code import PapersWithCodeScraper
     
     return {
         # ML Platforms
@@ -36,6 +37,7 @@ def get_all_scrapers():
         'datagov': DataGovScraper,
         # Curated Benchmarks
         'curated': CuratedDatasetsScraper,
+        'papers_with_code': PapersWithCodeScraper,
     }
 
 
@@ -44,7 +46,7 @@ SOURCE_CATEGORIES = {
     'ml_platforms': ['huggingface', 'kaggle', 'openml'],
     'academic': ['zenodo', 'harvard_dataverse'],
     'government': ['datagov', 'aws_opendata'],
-    'curated': ['curated'],
+    'curated': ['curated', 'papers_with_code'],
 }
 
 
@@ -100,6 +102,7 @@ def _save_datasets_to_db(datasets: list) -> int:
     from bson import ObjectId
     from pymongo import UpdateOne
     from app.ml.quality_scorer import quality_scorer
+    from app.ml.semantic_search import SemanticSearch
     
     saved_count = 0
     skipped_count = 0
@@ -219,6 +222,23 @@ def _save_datasets_to_db(datasets: list) -> int:
                 
                 logger.debug(f"Upserted dataset: {platform}/{platform_id} - {canonical_name}")
                 
+                # Update Semantic Search Index
+                try:
+                    search_engine = SemanticSearch() # Use singleton
+                    text_to_index = f"{dataset.get('canonical_name', '')} {dataset.get('description', '')} {dataset.get('domain', '')} {dataset.get('modality', '')}"
+                    # We need the ID. If it's an update, we need to find the existing ID if result.upserted_id is None
+                    doc_id = result.upserted_id
+                    if not doc_id:
+                        # Find existing
+                        existing_doc = collection.find_one(dedup_query, {"_id": 1})
+                        if existing_doc:
+                            doc_id = existing_doc["_id"]
+                    
+                    if doc_id:
+                        search_engine.add_to_index(str(doc_id), text_to_index)
+                except Exception as se:
+                    logger.error(f"Failed to add to semantic index: {se}")
+                
                 # Determine dataset_id for version tracking
                 if result.upserted_id:
                     dataset_id = result.upserted_id
@@ -286,6 +306,53 @@ def _save_datasets_to_db(datasets: list) -> int:
                             'is_current': True
                         }
                         versions_collection.insert_one(version_doc)
+                        
+                        # --- Feature 6: Drift Detection ---
+                        if not is_new and existing:
+                            try:
+                                drift_alerts = []
+                                drift_score = 0
+                                
+                                # Compare logic (simplified version of the one in datasets.py)
+                                for field, display in [
+                                    ('samples', 'Sample count'),
+                                    ('downloads', 'Downloads'),
+                                    ('likes', 'Likes'),
+                                    ('file_size', 'File size')
+                                ]:
+                                    curr = new_metrics.get(field)
+                                    prev = old_metrics.get(field)
+                                    if curr and prev and prev > 0:
+                                        change = ((curr - prev) / prev) * 100
+                                        if abs(change) > 20: # 20% threshold for event
+                                            severity = 'high' if abs(change) > 50 else 'medium'
+                                            drift_score += (30 if severity == 'high' else 15)
+                                            drift_alerts.append({
+                                                'field': field,
+                                                'display': display,
+                                                'change': round(change, 1),
+                                                'severity': severity
+                                            })
+                                
+                                if drift_alerts:
+                                    event = {
+                                        'dataset_id': dataset_id,
+                                        'timestamp': datetime.utcnow(),
+                                        'type': 'drift_detected',
+                                        'score': drift_score,
+                                        'alerts': drift_alerts,
+                                        'version': version_doc['version']
+                                    }
+                                    db.drift_events.insert_one(event)
+                                    logger.info(f"Drift detected for {dataset_id}: Score {drift_score}")
+                                    
+                                    # Trigger alert task
+                                    if drift_score >= 30:
+                                        from app.tasks.scraping_tasks import send_drift_alerts
+                                        send_drift_alerts.delay(str(dataset_id), event)
+                                        
+                            except Exception as de:
+                                logger.error(f"Drift detection failed for {dataset_id}: {de}")
                 
                 if result.upserted_id or result.modified_count:
                     saved_count += 1
@@ -364,6 +431,62 @@ def scrape_category(category: str):
     }
 
 
+@shared_task(bind=True, max_retries=3)
+def enrich_dataset_metadata(self, dataset_id: str):
+    """
+    Enrich a dataset with additional metadata from Papers With Code.
+    Fetches benchmarks, SOTA results, and task taxonomy.
+    """
+    from bson import ObjectId
+    from app.scrapers.papers_with_code import PapersWithCodeScraper
+    
+    try:
+        client = mongodb.get_sync_client()
+        db = client.datavault
+        
+        dataset = db.datasets.find_one({"_id": ObjectId(dataset_id)})
+        if not dataset:
+            return {"status": "error", "message": "Dataset not found"}
+            
+        scraper = PapersWithCodeScraper()
+        
+        # We need an async wrapper to run the scraper methods if they are async
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        # PWC uses the name or platform_id as the slug
+        slug = dataset.get("source", {}).get("platform_id")
+        if not slug:
+            # Try to match by name
+            name = dataset.get("canonical_name")
+            if name:
+                slug = name.lower().replace(" ", "-")
+        
+        if not slug:
+            return {"status": "skipped", "message": "No slug found for PWC mapping"}
+            
+        # Call enrichment (we will implement this method in PapersWithCodeScraper)
+        enrichment_data = loop.run_until_complete(scraper.get_dataset_enrichment(slug))
+        
+        if enrichment_data:
+            db.datasets.update_one(
+                {"_id": ObjectId(dataset_id)},
+                {"$set": {
+                    "benchmarks": enrichment_data.get("benchmarks", []),
+                    "intelligence.tasks": list(set(dataset.get("intelligence", {}).get("tasks", []) + enrichment_data.get("tasks", []))),
+                    "intelligence.pwc_metadata": enrichment_data.get("metadata", {}),
+                    "last_enriched_at": datetime.utcnow()
+                }}
+            )
+            return {"status": "success", "enriched": True}
+        
+        return {"status": "success", "enriched": false}
+        
+    except Exception as exc:
+        logger.error(f"Enrichment failed for dataset {dataset_id}: {exc}")
+        raise self.retry(exc=exc, countdown=60)
+
+
 @shared_task
 def scrape_ml_platforms():
     """Scrape ML-focused platforms (HuggingFace, Kaggle, OpenML, etc.)."""
@@ -429,4 +552,24 @@ def get_available_sources():
         'categories': SOURCE_CATEGORIES,
         'total_sources': len(scrapers)
     }
+
+
+@shared_task
+def send_drift_alerts(dataset_id: str, event: dict):
+    """
+    Send alerts for significant dataset drift.
+    In current implementation, we log and mock webhook/email.
+    """
+    logger.info(f"ALERTER: High drift detected for dataset {dataset_id}!")
+    logger.info(f"ALERTER: Score: {event['score']}, Alerts: {len(event['alerts'])}")
+    
+    # Mock webhook
+    webhook_url = "https://hooks.slack.com/services/mock"
+    logger.info(f"ALERTER: Sending webhook to {webhook_url}...")
+    
+    # Mock email for starred users (we'd fetch users who starred this dataset)
+    logger.info(f"ALERTER: Notifying starred users about {event['version']} drift...")
+    
+    return True
+
 

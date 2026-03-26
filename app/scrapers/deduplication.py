@@ -21,8 +21,9 @@ class DatasetDeduplicator:
     def __init__(
         self,
         fuzzy_threshold: float = 85.0,
-        embedding_threshold: float = 0.90,
-        model_name: str = "all-MiniLM-L6-v2"
+        embedding_threshold: float = 0.85,
+        model_name: str = "BAAI/bge-base-en-v1.5"
+
     ):
         """
         Initialize deduplicator.

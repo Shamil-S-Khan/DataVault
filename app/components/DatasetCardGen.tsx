@@ -35,7 +35,7 @@ export default function DatasetCardGen({ datasetId }: DatasetCardGenProps) {
     const fetchCard = async () => {
         setLoading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const res = await fetch(`${apiUrl}/api/datasets/${datasetId}/card`)
             const data = await res.json()
 
@@ -73,7 +73,7 @@ export default function DatasetCardGen({ datasetId }: DatasetCardGenProps) {
     const downloadCard = async () => {
         setDownloading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const res = await fetch(`${apiUrl}/api/datasets/${datasetId}/card/download`)
             const blob = await res.blob()
             const url = window.URL.createObjectURL(blob)
@@ -198,70 +198,6 @@ export default function DatasetCardGen({ datasetId }: DatasetCardGenProps) {
                 </div>
             )}
 
-            {/* Usage Section */}
-            {sections.usage && (
-                <div className="mb-4">
-                    <button
-                        onClick={() => toggleSection('usage')}
-                        className="w-full flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl"
-                    >
-                        <span className="font-semibold text-gray-900 dark:text-white">
-                            {sections.usage.title}
-                        </span>
-                        {expandedSections.has('usage') ? (
-                            <ChevronUpIcon className="w-5 h-5 text-gray-500" />
-                        ) : (
-                            <ChevronDownIcon className="w-5 h-5 text-gray-500" />
-                        )}
-                    </button>
-
-                    {expandedSections.has('usage') && (
-                        <div className="p-4 border-x border-b border-gray-200 dark:border-gray-700 rounded-b-xl space-y-4">
-                            {/* Use Cases */}
-                            {sections.usage.use_cases?.length > 0 && (
-                                <div>
-                                    <h4 className="font-medium text-gray-900 dark:text-white mb-2">Use Cases</h4>
-                                    <div className="flex flex-wrap gap-2">
-                                        {sections.usage.use_cases.map((uc: string, i: number) => (
-                                            <span key={i} className="px-3 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 rounded-full text-sm">
-                                                {uc}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Code Snippets */}
-                            {sections.usage.code_snippets?.map((snippet: CodeSnippet, i: number) => (
-                                <div key={i}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h4 className="font-medium text-gray-900 dark:text-white">{snippet.title}</h4>
-                                        <button
-                                            onClick={() => copyToClipboard(snippet.code, `snippet-${i}`)}
-                                            className="flex items-center gap-1 text-sm text-gray-500 hover:text-primary-500"
-                                        >
-                                            {copiedSnippet === `snippet-${i}` ? (
-                                                <>
-                                                    <CheckIcon className="w-4 h-4 text-green-500" />
-                                                    Copied!
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <ClipboardIcon className="w-4 h-4" />
-                                                    Copy
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
-                                    <pre className="p-3 bg-gray-900 text-gray-100 rounded-lg overflow-x-auto text-sm">
-                                        <code>{snippet.code}</code>
-                                    </pre>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* Considerations Section */}
             {sections.considerations && (

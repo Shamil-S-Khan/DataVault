@@ -34,7 +34,7 @@ class DatasetRecommender:
         The batch_size arg is accepted for API compatibility.
         """
         search_engine = await self._get_search_engine()
-        await search_engine.build_index()
+        await search_engine.rebuild_from_mongo(self.db)
         logger.info("Semantic vector index rebuild complete")
     
     async def get_similar_datasets(
@@ -160,7 +160,19 @@ class DatasetRecommender:
             List of matching datasets with explanations
         """
         search_engine = await self._get_search_engine()
-        candidates = await search_engine.search_datasets(query_text, k=max(limit * 4, limit + 10), threshold=0.0)
+        semantic_results = await search_engine.search(query_text, top_k=max(limit * 4, limit + 10))
+        
+        # Fetch full docs for the UI logic in this method
+        candidates = []
+        if semantic_results:
+            candidate_ids = [ObjectId(r["id"]) for r in semantic_results]
+            cursor = self.db.datasets.find({"_id": {"$in": candidate_ids}})
+            docs_map = {str(d["_id"]): d for d in await cursor.to_list(length=len(candidate_ids))}
+            for r in semantic_results:
+                if r["id"] in docs_map:
+                    doc = docs_map[r["id"]]
+                    doc["similarity_score"] = r["score"]
+                    candidates.append(doc)
 
         # Fallback: if semantic index is still warming/missing, use text search for responsiveness
         if not candidates:

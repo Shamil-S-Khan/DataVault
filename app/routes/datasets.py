@@ -2,16 +2,21 @@
 Dataset API routes.
 Endpoints for dataset discovery, search, and details.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
+from typing import List, Optional, Dict, Any
+import hashlib
+import json
 from datetime import datetime
 from bson import ObjectId
+from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.db.connection import get_database
 from app.db.redis_client import redis_client
 from app.db.models import Dataset
 from app.llm.gemini_client import gemini_client
+from app.llm.xai_client import xai_client
+from app.llm.groq_client import groq_client
 from app.config import settings
 from app.ml.recommender import get_recommender
 from app.ml.quality_scorer import quality_scorer
@@ -902,17 +907,78 @@ async def trigger_dataset_analysis(
             'analyzed_at': dataset.get('intelligence_updated_at').isoformat() if dataset.get('intelligence_updated_at') else None
         }
     
-    # Trigger analysis task
-    task = analyze_dataset_intelligence.delay(dataset_id)
-    
-    logger.info(f"Triggered intelligence analysis for {dataset.get('canonical_name')} (task: {task.id})")
-    
-    return {
-        'status': 'queued',
-        'dataset_id': dataset_id,
-        'task_id': task.id,
-        'message': 'Analysis task queued. Check back in a few moments.'
-    }
+    # Trigger analysis task with fallback if Celery/Redis is down
+    try:
+        task = analyze_dataset_intelligence.delay(dataset_id)
+        logger.info(f"Triggered intelligence analysis for {dataset.get('canonical_name')} (Celery task: {task.id})")
+        return {
+            'status': 'queued',
+            'dataset_id': dataset_id,
+            'task_id': task.id,
+            'message': 'Analysis task queued via Celery.'
+        }
+    except Exception as e:
+        logger.warning(f"Celery dispatch failed, falling back to sync analysis for {dataset_id}: {e}")
+        # Run intelligence analysis synchronously (in a separate thread to not block)
+        from app.llm.dataset_intelligence import dataset_intelligence_analyzer
+        import asyncio
+        
+        # We'll use BackgroundTasks to run it so we can return immediately
+        from fastapi import BackgroundTasks
+        
+        async def run_sync_analysis():
+            try:
+                # Fetch schema and samples
+                from app.db.connection import mongodb
+                db = mongodb.db
+                schema = dataset.get('metadata', {}).get('schema')
+                
+                # Get sample data
+                from bson import ObjectId
+                samples_cursor = db.dataset_samples.find({'dataset_id': ObjectId(dataset_id)}).limit(5)
+                sample_data = []
+                async for sample in samples_cursor:
+                    if 'data' in sample:
+                        sample_data.append(sample['data'])
+                
+                intelligence = await dataset_intelligence_analyzer.analyze_dataset(
+                    dataset_id=dataset_id,
+                    dataset_name=dataset.get('canonical_name', ''),
+                    description=dataset.get('description', ''),
+                    schema=schema,
+                    samples=sample_data if sample_data else None,
+                    metadata=dataset.get('metadata')
+                )
+                
+                if intelligence:
+                    # Update database
+                    intelligence_dict = intelligence.model_dump()
+                    if 'analyzed_at' in intelligence_dict:
+                        intelligence_dict['analyzed_at'] = intelligence_dict['analyzed_at'].isoformat()
+                    
+                    await db.datasets.update_one(
+                        {'_id': ObjectId(dataset_id)},
+                        {
+                            '$set': {
+                                'intelligence': intelligence_dict,
+                                'intelligence_updated_at': datetime.utcnow(),
+                                'updated_at': datetime.utcnow()
+                            }
+                        }
+                    )
+            except Exception as inner_e:
+                logger.error(f"Sync analysis fallback failed for {dataset_id}: {inner_e}")
+
+        # Note: In a production environment, you'd use BackgroundTasks from the FastAPI dependency
+        # But here we'll just fire and forget since we are already inside the route
+        asyncio.create_task(run_sync_analysis())
+        
+        return {
+            'status': 'processing',
+            'dataset_id': dataset_id,
+            'message': 'Analysis started in-process (Celery unavailable).'
+        }
+
 
 
 @router.get("/{dataset_id}/intelligence")
@@ -1082,7 +1148,7 @@ async def get_dataset_full_analysis(dataset_id: str):
     This is the comprehensive view for the dataset detail page.
     """
     try:
-        ObjectId(dataset_id)
+        obj_id = ObjectId(dataset_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid dataset ID")
     
@@ -1090,8 +1156,7 @@ async def get_dataset_full_analysis(dataset_id: str):
     from app.analytics.fitness_calculator import fitness_calculator
     from app.analytics.license_analyzer import license_analyzer
     
-    dataset = await mongodb.db.datasets.find_one({'_id': ObjectId(dataset_id)})
-    
+    dataset = await mongodb.db.datasets.find_one({'_id': obj_id})
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
@@ -1117,6 +1182,198 @@ async def get_dataset_full_analysis(dataset_id: str):
         'domain': dataset.get('domain'),
         'modality': dataset.get('modality')
     }
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[ChatMessage] = Field(default_factory=list)
+
+class SmartSearchFilters(BaseModel):
+    domain: Optional[str] = None
+    modality: Optional[str] = None
+    row_count_gte: Optional[int] = None
+    size_bytes_lte: Optional[int] = None
+    platform: Optional[str] = None
+    min_gqi: Optional[float] = None
+
+class SmartSearchRequest(BaseModel):
+    query: str
+    filters: Optional[SmartSearchFilters] = None
+    limit: int = 100
+    offset: int = 0
+
+@router.post("/{dataset_id}/chat")
+async def chat_with_dataset(
+    dataset_id: str,
+    request: ChatRequest,
+    fastapi_request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Conversational Q&A about a specific dataset.
+    """
+    try:
+        obj_id = ObjectId(dataset_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+
+    # 1. Rate Limiting (Bypass if disabled)
+    if not settings.disable_tier_gating:
+        client_ip = fastapi_request.client.host
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        rate_key = f"chat_limit:unauth:{dataset_id}:{client_ip}:{today}"
+        
+        count = await redis_client.increment(rate_key)
+        if count == 1:
+            await redis_client.expire(rate_key, 86400) # 24h
+            
+        if count > 2:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "UPGRADE_REQUIRED",
+                    "message": "You've reached the free chat limit for today. Upgrade to Pro for unlimited dataset chat."
+                }
+            )
+
+    # 2. Fetch Dataset and Samples
+    dataset = await db.datasets.find_one({"_id": obj_id})
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+        
+    samples = await db.dataset_samples.find({"dataset_id": obj_id}).limit(5).to_list(5)
+
+    # 3. Assemble Context
+    context_parts = []
+    
+    # Basic Info
+    name = dataset.get("canonical_name", "Unknown")
+    desc = dataset.get("description", "No description provided.")
+    context_parts.append(f"Dataset Name: {name}\nDescription: {desc}")
+    
+    # Metadata
+    source_info = dataset.get("source", {})
+    platform = source_info.get("platform", "Unknown")
+    source_url = source_info.get("url", "N/A")
+    domain = dataset.get("domain", "N/A")
+    modality = dataset.get("modality", "N/A")
+    context_parts.append(f"Platform: {platform}\nSource URL: {source_url}\nDomain: {domain}\nModality: {modality}")
+    
+    # Size
+    size_info = dataset.get("size", {})
+    samples_count = size_info.get("samples", "Unknown")
+    file_size = size_info.get("file_size_gb", "Unknown")
+    context_parts.append(f"Scale: {samples_count} rows, approx {file_size} GB")
+    
+    # Quality (GQI)
+    gqi_score = dataset.get("gqi_score")
+    if gqi_score is not None:
+        context_parts.append(f"Global Quality Index (GQI): {gqi_score:.2f}")
+        
+    quality_breakdown = dataset.get("quality_breakdown", {})
+    if quality_breakdown:
+        breakdown_items = []
+        for k, v in quality_breakdown.items():
+            if isinstance(v, dict):
+                score = v.get("score")
+                if score is not None:
+                    breakdown_items.append(f"- {k.title()}: {score:.2f}")
+                else:
+                    breakdown_items.append(f"- {k.title()}: {v}")
+            elif isinstance(v, (int, float)):
+                breakdown_items.append(f"- {k.title()}: {v:.2f}")
+            else:
+                breakdown_items.append(f"- {k.title()}: {v}")
+        
+        qb_str = "\n".join(breakdown_items)
+        context_parts.append(f"Quality Breakdown:\n{qb_str}")
+        
+    # Task Fitness
+    fitness = dataset.get("fitness", {})
+    task_fitness = fitness.get("task_fitness")
+    if task_fitness:
+        tf_str = "\n".join([f"- {k}: {v['match_rate']}% (Reasoning: {', '.join(v['reasoning'])})" for k, v in task_fitness.items()])
+        context_parts.append(f"Task Fitness Scores:\n{tf_str}")
+        
+    # Intelligence / AI Analysis
+    intelligence = dataset.get("intelligence", {})
+    if intelligence:
+        summary = intelligence.get("summary")
+        if summary:
+            context_parts.append(f"AI Analysis Summary: {summary}")
+        
+        tasks = intelligence.get("tasks", [])
+        if tasks:
+            context_parts.append(f"Suggested Tasks: {', '.join(tasks)}")
+
+    # Sample Data Table
+    if samples:
+        header = "| " + " | ".join(samples[0]["row"].keys()) + " |"
+        separator = "| " + " | ".join(["---"] * len(samples[0]["row"])) + " |"
+        rows = []
+        for s in samples:
+            row_vals = [str(v)[:50] + ("..." if len(str(v)) > 50 else "") for v in s["row"].values()]
+            rows.append("| " + " | ".join(row_vals) + " |")
+        
+        sample_table = f"Sample Data (First 5 Rows):\n{header}\n{separator}\n" + "\n".join(rows)
+        context_parts.append(sample_table)
+
+    assembled_context = "\n\n---\n\n".join(context_parts)
+
+    # 4. Prompt Engineering
+    system_prompt = f"""You are DataVault Assistant, an expert AI helping users understand and evaluate datasets for machine learning projects.
+
+You have been given structured information about a specific dataset:
+---
+{assembled_context}
+---
+
+Answer the user's questions about this dataset accurately and concisely. Base your answers ONLY on the information provided above — do not invent statistics, scores, or facts not present in the context. If the context does not contain enough information to answer a question, say so clearly and suggest what additional information would help. Keep answers under 150 words unless a detailed breakdown is explicitly requested. Use plain language, not jargon."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add history (last 10 turns max)
+    history = request.history[-10:] if request.history else []
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+        
+    # Add new user message
+    messages.append({"role": "user", "content": request.message})
+
+    # 5. Call LLM
+    try:
+        if settings.llm_provider == "gemini":
+            from app.llm.gemini_client import gemini_client
+            reply = await gemini_client.chat(messages)
+        elif settings.llm_provider == "grok":
+            from app.llm.xai_client import xai_client
+            reply = await xai_client.chat(messages)
+        elif settings.llm_provider == "groq":
+            from app.llm.groq_client import groq_client
+            reply = await groq_client.chat(messages)
+        else:
+            from app.llm.huggingface_client import huggingface_client
+            reply = await huggingface_client.chat(messages)
+        
+        if not reply:
+            raise Exception("LLM returned empty response")
+            
+        return {
+            "reply": reply,
+            "dataset_id": dataset_id
+        }
+    except Exception as e:
+        logger.error(f"Chat failed for dataset {dataset_id}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="The chat service is temporarily unavailable. Please try again in a moment."
+        )
+
+
 
 
 @router.get("/{dataset_id}/similar")
@@ -1372,65 +1629,6 @@ async def get_bias_analysis(dataset_id: str):
     }
 
 
-@router.get("/{dataset_id}/versions")
-async def get_version_history(dataset_id: str):
-    """
-    Get version history for a dataset.
-    
-    Returns timeline of snapshots showing dataset evolution.
-    """
-    try:
-        ObjectId(dataset_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid dataset ID")
-    
-    from app.db.connection import mongodb
-    from app.analytics.version_tracker import version_tracker
-    
-    dataset = await mongodb.db.datasets.find_one({'_id': ObjectId(dataset_id)})
-    
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    
-    versions = version_tracker.get_versions(dataset)
-    
-    return {
-        'status': 'success',
-        'dataset_id': dataset_id,
-        'dataset_name': dataset.get('canonical_name'),
-        'versions': versions,
-        'version_count': len(versions)
-    }
-
-
-@router.get("/{dataset_id}/drift")
-async def get_drift_analysis(dataset_id: str):
-    """
-    Get drift analysis for a dataset.
-    
-    Detects significant changes and potential issues with the dataset.
-    """
-    try:
-        ObjectId(dataset_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid dataset ID")
-    
-    from app.db.connection import mongodb
-    from app.analytics.version_tracker import version_tracker
-    
-    dataset = await mongodb.db.datasets.find_one({'_id': ObjectId(dataset_id)})
-    
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    
-    drift = version_tracker.detect_drift(dataset)
-    
-    return {
-        'status': 'success',
-        'dataset_id': dataset_id,
-        'dataset_name': dataset.get('canonical_name'),
-        **drift
-    }
 
 
 @router.get("/{dataset_id}/synthetic")
@@ -1928,8 +2126,9 @@ async def get_size_stats():
         }
     ]
     
+    cursor = mongodb.db.datasets.aggregate(pipeline, allowDiskUse=True)
     platform_stats = []
-    async for doc in mongodb.db.datasets.aggregate(pipeline):
+    async for doc in cursor:
         platform_stats.append({
             'platform': doc['_id'],
             'total': doc['total'],
@@ -2088,57 +2287,6 @@ async def get_dataset_drift(dataset_id: str):
     }
 
 
-@router.get("/{dataset_id}/similar")
-async def get_similar_datasets(
-    dataset_id: str,
-    limit: int = Query(10, ge=1, le=50),
-    same_platform: bool = False,
-    same_modality: bool = False,
-    db: AsyncIOMotorDatabase = Depends(get_database)
-):
-    """
-    Get similar datasets using ML-based recommendations.
-    Uses semantic embeddings to find contextually similar datasets.
-    
-    Args:
-        dataset_id: Target dataset ID
-        limit: Number of recommendations
-        same_platform: Filter to same platform
-        same_modality: Filter to same modality
-    
-    Returns:
-        List of similar datasets with similarity scores
-    """
-    try:
-        # Get recommender instance
-        recommender = await get_recommender(db)
-        
-        # Build filters
-        filters = {}
-        if same_platform:
-            filters['same_platform'] = True
-        if same_modality:
-            filters['same_modality'] = True
-        
-        # Get recommendations
-        recommendations = await recommender.get_similar_datasets(
-            dataset_id=dataset_id,
-            limit=limit,
-            filters=filters
-        )
-        
-        return {
-            'status': 'success',
-            'target_dataset_id': dataset_id,
-            'count': len(recommendations),
-            'recommendations': recommendations
-        }
-        
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error getting similar datasets: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get recommendations")
 
 
 @router.get("/{dataset_id}/quality")
@@ -2187,55 +2335,463 @@ async def get_dataset_quality(
         raise HTTPException(status_code=500, detail="Failed to calculate quality")
 
 
-@router.post("/search/semantic")
-async def semantic_search(
-    query: str,
-    limit: int = Query(10, ge=1, le=50),
-    domain: Optional[str] = None,
-    modality: Optional[str] = None,
-    platform: Optional[str] = None,
+@router.post("/smart-search")
+async def smart_search(
+    request: SmartSearchRequest,
+    fastapi_request: Request,
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Search datasets using semantic similarity.
-    Finds datasets matching natural language queries.
+    AI-powered natural language search.
+    - Extracts intent using LLM
+    - Performs semantic search
+    - Applies MongoDB filters
+    """
+    # 1. Intent Extraction (cached)
+    query_hash = hashlib.sha256(request.query.encode()).hexdigest()
+    cache_key = f"search_intent:{query_hash}"
     
-    Args:
-        query: Natural language search query
-        limit: Number of results
-        domain: Optional domain filter
-        modality: Optional modality filter
-        platform: Optional platform filter
+    intent = await redis_client.get(cache_key)
+    if not intent:
+        try:
+            provider = getattr(settings, 'llm_provider', 'gemini').lower()
+            
+            system_prompt = """Extract search intent from the user's natural language query.
+Return ONLY a JSON object with these fields (use null if not mentioned):
+{
+  "semantic_query": "rephrased query for vector search",
+  "domain": "Computer Vision|NLP|Audio|Tabular|Healthcare|etc",
+  "modality": "image|text|audio|video|tabular",
+  "min_samples": integer,
+  "max_size_gb": float,
+  "platform": "huggingface|kaggle|openml",
+  "min_gqi": float (0-1)
+}"""
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": request.query}
+            ]
+            
+            llm_response = None
+            if provider == 'gemini':
+                llm_response = await gemini_client.chat(messages, max_tokens=150, temperature=0.1)
+            elif provider == 'grok':
+                from app.llm.xai_client import xai_client
+                llm_response = await xai_client.chat(messages, max_tokens=150, temperature=0.1)
+            elif provider == 'groq':
+                from app.llm.groq_client import groq_client
+                llm_response = await groq_client.chat(messages)
+            else:
+                from app.llm.huggingface_client import huggingface_client
+                llm_response = await huggingface_client.chat(messages, max_tokens=150, temperature=0.1)
+                
+            if llm_response:
+                # Clean JSON
+                start = llm_response.find('{')
+                end = llm_response.rfind('}')
+                if start != -1 and end != -1:
+                    intent_json = llm_response[start:end+1]
+                    intent = json.loads(intent_json)
+                    await redis_client.set(cache_key, intent, ttl=3600) # 1h
+        except Exception as e:
+            logger.error(f"Intent extraction failed: {e}")
+            intent = None
+
+    # Fallback to defaults
+    if not intent:
+        intent = {"semantic_query": request.query}
+
+    semantic_query = intent.get("semantic_query") or request.query
+
+    # 2. Parallel Search
+    # 2a. Semantic Search Candidates
+    try:
+        from app.ml.semantic_search import get_semantic_search
+        semantic_engine = await get_semantic_search(db)
+        semantic_results = await semantic_engine.search(semantic_query, top_k=100)
+    except Exception as e:
+        logger.error(f"Semantic search failed: {e}")
+        semantic_results = []
+
+    # 2b. Keyword Search (MongoDB Text Search)
+    keyword_query = {"$text": {"$search": request.query}} if request.query else {}
+    # Apply context filters if extracted by LLM
+    if intent.get("domain"): keyword_query["domain"] = intent.get("domain")
+    if intent.get("modality"): keyword_query["modality"] = intent.get("modality").lower()
+
+    keyword_results = []
+    try:
+        keyword_cursor = db.datasets.find(
+            keyword_query, 
+            {"_id": 1, "canonical_name": 1}
+        ).sort([("_text_score", {"$meta": "textScore"})]).limit(100)
+        keyword_results = await keyword_cursor.to_list(length=100)
+    except Exception as e:
+        logger.error(f"Keyword search failed: {e}")
+
+    # 3. RRF Fusion
+    from app.ml.fusion import reciprocal_rank_fusion
+    ranked_ids = reciprocal_rank_fusion(keyword_results, semantic_results)
+
+    # 4. Fetch Full Documents & Apply Hard Filters
+    # Fetch a candidate pool based on fused ranks
+    candidate_pool_ids = [ObjectId(rid) for rid in ranked_ids[:150]]
     
-    Returns:
-        Semantically similar datasets
+    filter_query = {"_id": {"$in": candidate_pool_ids}}
+    req_f = request.filters or SmartSearchFilters()
+    
+    if req_f.domain: filter_query["domain"] = req_f.domain
+    if req_f.modality: filter_query["modality"] = req_f.modality.lower()
+    
+    if req_f.row_count_gte or intent.get("min_samples"):
+        filter_query["size.samples"] = {"$gte": req_f.row_count_gte or intent.get("min_samples")}
+    
+    if req_f.size_bytes_lte or (intent.get("max_size_gb") * 1024 * 1024 * 1024 if intent.get("max_size_gb") else None):
+        filter_query["size.file_size_bytes"] = {"$lte": req_f.size_bytes_lte or (intent.get("max_size_gb") * 1024 * 1024 * 1024 if intent.get("max_size_gb") else None)}
+
+    if req_f.platform or intent.get("platform"):
+        filter_query["source.platform"] = (req_f.platform or intent.get("platform")).lower()
+
+    min_gqi = req_f.min_gqi or intent.get("min_gqi")
+    if min_gqi:
+        filter_query["gqi_score"] = {"$gte": min_gqi}
+
+    # Fetch final datasets
+    final_cursor = db.datasets.find(filter_query)
+    datasets_dict = {str(d["_id"]): d for d in await final_cursor.to_list(length=150)}
+
+    # Re-sort into fused order
+    filtered_datasets = []
+    for rid in ranked_ids:
+        if rid in datasets_dict:
+            filtered_datasets.append(datasets_dict[rid])
+
+    # 5. Paginate & Format
+    total = len(filtered_datasets)
+    paged_datasets = filtered_datasets[request.offset : request.offset + request.limit]
+
+    results = []
+    # Map semantic scores for the UI display
+    semantic_score_map = {str(r["id"]): r["score"] for r in semantic_results}
+    
+    for d in paged_datasets:
+        results.append({
+            "id": str(d["_id"]),
+            "name": d.get("canonical_name") or d.get("display_name"),
+            "description": d.get("description", "")[:250],
+            "domain": d.get("domain"),
+            "modality": d.get("modality"),
+            "platform": d.get("source", {}).get("platform"),
+            "gqi_score": d.get("gqi_score"),
+            "quality_score": d.get("quality_score") if d.get("quality_score") is not None else d.get("gqi_score", 0),
+            "trend_score": d.get("trend_score") if d.get("trend_score") is not None else (d.get("gqi_score", 0) * 0.8), # Mock trend if missing
+            "quality_label": d.get("quality_label") or ("Excellent" if d.get("gqi_score", 0) > 0.8 else "Good" if d.get("gqi_score", 0) > 0.5 else "Fair"),
+            "size": d.get("size", {}),
+            "source": d.get("source", {}),
+            "created_at": d.get("created_at").isoformat() if d.get("created_at") and hasattr(d.get("created_at"), 'isoformat') else d.get("created_at"),
+            "similarity_score": semantic_score_map.get(str(d["_id"]))
+        })
+
+
+    return {
+        "results": results,
+        "total": total,
+        "intent": intent,
+        "query": request.query
+    }
+
+
+@router.get("/{dataset_id}/snippet")
+async def get_dataset_snippet(
+    dataset_id: str,
+    lang: str = Query("python", regex="^(python|javascript|r)$"),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Generate code snippets to load the dataset.
+    Branches logic based on the dataset source platform.
+    """
+    # Check cache
+    cache_key = f"snippet:{dataset_id}:{lang}"
+    cached = await redis_client.get(cache_key)
+    if cached:
+        return cached
+
+    # Fetch dataset
+    try:
+        dataset = await db.datasets.find_one({"_id": ObjectId(dataset_id)})
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+
+    source = dataset.get("source", {})
+    platform = source.get("platform", "").lower()
+    platform_id = source.get("platform_id", "")
+    url = source.get("url", "")
+    
+    snippet = ""
+    install_note = ""
+    
+    if lang == "python":
+        if platform == "huggingface":
+            snippet = f"from datasets import load_dataset\n\n# Load the dataset from HuggingFace\ndataset = load_dataset('{platform_id}')\n\n# Quick preview\nprint(dataset)"
+            install_note = "Requires: pip install datasets"
+        
+        elif platform == "kaggle":
+            # Kaggle snippets often require the kaggle CLI or specific username/id
+            snippet = f"import kaggle\n\n# Authenticate and download\nkaggle.api.authenticate()\nkaggle.api.dataset_download_files('{platform_id}', path='./data', unzip=True)\n\nimport pandas as pd\nimport os\n# Assuming first CSV found is the main data\ncsv_files = [f for f in os.listdir('./data') if f.endswith('.csv')]\nif csv_files:\n    df = pd.read_csv(os.path.join('./data', csv_files[0]))\n    print(df.head())"
+            install_note = "Requires: pip install kaggle pandas (and ~/.kaggle/kaggle.json setup)"
+            
+        elif platform == "openml":
+            openml_id = platform_id.split('/')[-1] if '/' in platform_id else platform_id
+            snippet = f"import openml\nimport pandas as pd\n\n# Load dataset from OpenML\ndataset = openml.datasets.get_dataset({openml_id})\nX, y, _, _ = dataset.get_data(target=dataset.default_target_attribute)\n\nprint(f'Loaded: {dataset.name}')\nprint(X.head())"
+            install_note = "Requires: pip install openml pandas"
+            
+        elif url and (url.endswith('.csv') or url.endswith('.parquet')):
+            if url.endswith('.csv'):
+                snippet = f"import pandas as pd\n\n# Load directly from URL\nurl = '{url}'\ndf = pd.read_csv(url)\n\nprint(df.head())"
+            else:
+                snippet = f"import pandas as pd\n\n# Load directly from URL\nurl = '{url}'\ndf = pd.read_parquet(url)\n\nprint(df.head())"
+            install_note = "Requires: pip install pandas"
+            
+        else:
+            snippet = f"# Manual download required\n# URL: {url or 'No URL available'}\n\nprint('Snippet not available for this platform/format.')"
+    
+    else:
+        snippet = f"// Snippet for {lang} is coming soon!\nconsole.log('Loading dataset {dataset_id}');"
+
+    response_data = {
+        "dataset_id": dataset_id,
+        "language": lang,
+        "platform": platform,
+        "snippet": snippet,
+        "install_note": install_note
+    }
+
+    # Cache for 24h
+    await redis_client.set(cache_key, response_data, ttl=86400)
+    
+    return response_data
+
+
+@router.get("/{dataset_id}/fitness")
+async def get_dataset_fitness(
+    dataset_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Calculate fitness scores for standard ML tasks based on dataset characteristics.
     """
     try:
-        recommender = await get_recommender(db)
-        
-        # Build filters
-        filters = {}
-        if domain:
-            filters['domain'] = domain
-        if modality:
-            filters['modality'] = modality
-        if platform:
-            filters['source.platform'] = platform.lower()
-        
-        # Get semantic recommendations
-        results = await recommender.get_recommendations_by_query(
-            query_text=query,
-            limit=limit,
-            filters=filters
-        )
-        
-        return {
-            'status': 'success',
-            'query': query,
-            'count': len(results),
-            'results': results
+        dataset = await db.datasets.find_one({"_id": ObjectId(dataset_id)})
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+
+    modality = (dataset.get("modality") or "").lower()
+    domain = (dataset.get("domain") or "").lower()
+    intelligence = dataset.get("intelligence", {})
+    it_tasks = [t.lower() for t in intelligence.get("tasks", [])]
+    
+    # Define common tasks and their requirements
+    tasks_to_eval = [
+        {
+            "name": "Image Classification",
+            "req_modality": "image",
+            "keywords": ["classification", "labels", "recognition"]
+        },
+        {
+            "name": "Sentiment Analysis",
+            "req_modality": "text",
+            "keywords": ["sentiment", "classification", "nlp"]
+        },
+        {
+            "name": "Object Detection",
+            "req_modality": "image",
+            "keywords": ["detection", "bounding boxes", "localization"]
+        },
+        {
+            "name": "Tabular Classification",
+            "req_modality": "tabular",
+            "keywords": ["classification", "tabular"]
         }
+    ]
+    
+    fitness_results = {}
+    overall_sum = 0
+    
+    for task in tasks_to_eval:
+        score = 0
+        reasoning = []
         
-    except Exception as e:
-        logger.error(f"Error in semantic search: {e}")
-        raise HTTPException(status_code=500, detail="Semantic search failed")
+        # 1. Modality match (0-4 points)
+        if modality == task["req_modality"]:
+            score += 4
+            reasoning.append(f"Modality matches {task['req_modality']}")
+        elif modality == "multimodal":
+            score += 2
+            reasoning.append("Dataset is multimodal, likely includes required modality")
+        else:
+            reasoning.append(f"Modality mismatch (Expected {task['req_modality']}, found {modality})")
+            
+        # 2. Intelligence Task match (0-4 points)
+        task_found = False
+        for t in it_tasks:
+            if task["name"].lower() in t or t in task["name"].lower():
+                task_found = True
+                break
+        
+        if task_found:
+            score += 4
+            reasoning.append(f"AI Analysis explicitly identified {task['name']} as a valid task")
+        else:
+            # Sub-keyword search
+            matches = [k for k in task["keywords"] if any(k in t for t in it_tasks)]
+            if matches:
+                score += 2
+                reasoning.append(f"Related signals found: {', '.join(matches)}")
+            else:
+                reasoning.append("No explicit task match found in AI analysis")
+                
+        # 3. Data Freshness/Quality (0-2 points)
+        if dataset.get("quality_score", 0) > 70:
+            score += 2
+            reasoning.append("High overall data quality")
+        elif dataset.get("quality_score", 0) > 40:
+            score += 1
+            reasoning.append("Moderate data quality")
+            
+        fitness_results[task["name"]] = {
+            "score": score,
+            "max_score": 10,
+            "match_rate": (score / 10) * 100,
+            "reasoning": reasoning
+        }
+        overall_sum += score
+
+    # Calculate overall stats for the existing component
+    avg_score = round(overall_sum / len(tasks_to_eval), 1)
+    grade = "D"
+    if avg_score >= 8: grade = "A"
+    elif avg_score >= 6: grade = "B"
+    elif avg_score >= 4: grade = "C"
+    
+    # Map breakdown to what the component expects
+    breakdown = {
+        "metadata_completeness": min(10, dataset.get("quality_score", 50) // 10 + 2),
+        "size_appropriateness": 8 if dataset.get("size", {}).get("samples", 0) > 1000 else 5,
+        "documentation_quality": 9 if dataset.get("description") and len(dataset["description"]) > 500 else 6,
+        "license_clarity": 10 if dataset.get("license") else 4,
+        "freshness": 7,
+        "community_signals": min(10, (dataset.get("source", {}).get("source_metadata", {}).get("likes", 0) // 100) + 5)
+    }
+
+    return {
+        "status": "success",
+        "dataset_id": dataset_id,
+        "fitness": {
+            "overall_score": avg_score,
+            "grade": grade,
+            "breakdown": breakdown,
+            "task_fitness": fitness_results,
+            "explanation": f"Based on its {modality} modality and {domain} domain, this dataset is most suitable for {max(fitness_results.items(), key=lambda x: x[1]['score'])[0]}.",
+            "calculated_at": datetime.now().isoformat()
+        }
+    }
+
+
+@router.post("/admin/enrich")
+async def trigger_pwc_enrichment(
+    dataset_id: Optional[str] = Query(None),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Trigger Papers With Code enrichment for datasets.
+    If dataset_id is provided, only that one is enriched.
+    Otherwise, all datasets with 'Papers With Code' in source/metadata are queued.
+    """
+    from app.tasks.scraping_tasks import enrich_dataset_metadata
+    
+    if dataset_id:
+        enrich_dataset_metadata.delay(dataset_id)
+        return {"status": "queued", "count": 1}
+        
+    # Find candidates
+    query = {
+        "$or": [
+            {"source.platform": "papers_with_code"},
+            {"metadata.pwc_id": {"$exists": True}}
+        ]
+    }
+    
+    cursor = db.datasets.find(query, {"_id": 1})
+    candidates = await cursor.to_list(length=1000)
+    
+    for doc in candidates:
+        enrich_dataset_metadata.delay(str(doc["_id"]))
+        
+    return {
+        "status": "queued",
+        "count": len(candidates)
+    }
+
+
+@router.post("/{dataset_id}/star")
+async def toggle_star_dataset(
+    dataset_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Toggle star status for a dataset.
+    In a real app, this would be per-user. 
+    Here we just toggle a 'is_starred' flag for demo purposes.
+    """
+    try:
+        obj_id = ObjectId(dataset_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+        
+    dataset = await db.datasets.find_one({"_id": obj_id})
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+        
+    new_status = not dataset.get("is_starred", False)
+    await db.datasets.update_one(
+        {"_id": obj_id},
+        {"$set": {"is_starred": new_status, "last_starred_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "status": "success",
+        "is_starred": new_status,
+        "message": "Dataset followed for drift alerts" if new_status else "Dataset unfollowed"
+    }
+
+
+@router.get("/{dataset_id}/drift-events")
+async def get_drift_events(
+    dataset_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """Get historical drift events for a dataset."""
+    try:
+        obj_id = ObjectId(dataset_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
+        
+    cursor = db.drift_events.find({"dataset_id": obj_id}).sort("timestamp", -1)
+    events = await cursor.to_list(length=50)
+    
+    # Format for frontend
+    for e in events:
+        e["_id"] = str(e["_id"])
+        e["dataset_id"] = str(e["dataset_id"])
+        e["timestamp"] = e["timestamp"].isoformat()
+        
+    return {
+        "status": "success",
+        "events": events
+    }

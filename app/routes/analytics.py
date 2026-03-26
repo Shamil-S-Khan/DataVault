@@ -147,7 +147,7 @@ async def get_recommendations(
     search = await get_semantic_search(db)
     
     # Find similar datasets
-    similar = await search.find_similar_datasets(ObjectId(dataset_id), k=limit)
+    similar = await search.find_similar_datasets(ObjectId(dataset_id), k=limit, db=db)
     
     # Format results
     recommendations = [

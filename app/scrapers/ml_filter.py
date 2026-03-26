@@ -356,9 +356,21 @@ class MLDatasetFilter:
         Returns score 0-1 or None if AI scoring unavailable.
         """
         try:
-            from app.llm.gemini_client import gemini_client
+            from app.config import settings
+            provider = getattr(settings, 'llm_provider', 'gemini').lower()
             
-            if not gemini_client.enabled:
+            client = None
+            if provider == 'gemini':
+                from app.llm.gemini_client import gemini_client
+                client = gemini_client
+            elif provider == 'grok':
+                from app.llm.xai_client import xai_client
+                client = xai_client
+            else:
+                from app.llm.huggingface_client import huggingface_client
+                client = huggingface_client
+
+            if not client or not client.enabled:
                 return None
             
             # Create prompt for scoring
@@ -370,8 +382,18 @@ Is this dataset suitable for machine learning/AI tasks?
 Rate from 0.0 (not suitable) to 1.0 (highly suitable).
 Only respond with a single decimal number.
 """
-            # This would call the LLM, but we'll skip for now to avoid rate limits
-            # In production, implement proper batching and caching
+            # Wait for response
+            import asyncio
+            response = asyncio.run(client.generate_text(text, max_tokens=10, temperature=0.1))
+            
+            if response:
+                try:
+                    # Extract number using regex
+                    match = re.search(r"(\d+\.\d+|\d+)", response)
+                    if match:
+                        return float(match.group(1))
+                except (ValueError, TypeError):
+                    pass
             return None
             
         except Exception as e:

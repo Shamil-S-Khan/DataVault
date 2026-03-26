@@ -8,6 +8,7 @@ venv/
 env/
 ENV/
 .venv
+.venv2/
 
 # Node
 node_modules/
@@ -68,3 +69,13 @@ error_investigation.txt
 temp_datasets.json
 pwc_test.json
 scripts/archive/
+
+# Local ML Indices
+faiss_index.bin
+faiss_mapping.pkl
+zvec_datasets*
+
+# Temporary Work
+tmp/
+/tmp/
+check_search.py
