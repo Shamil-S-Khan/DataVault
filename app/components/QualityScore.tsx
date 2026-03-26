@@ -42,7 +42,7 @@ export default function QualityScore({ datasetId, compact = false, showBreakdown
         setLoading(true)
         setError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const url = `${apiUrl}/api/datasets/${datasetId}/quality?detailed=${showBreakdown}`
             console.log('Fetching quality from:', url)
             const response = await fetch(url)

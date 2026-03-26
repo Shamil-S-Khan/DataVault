@@ -37,7 +37,7 @@ export default function SemanticSearch() {
         setLoading(true)
         setError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const params = new URLSearchParams({
                 query: query.trim(),
                 limit: '10'

@@ -22,18 +22,25 @@ class MongoDB:
     async def connect(self):
         """Establish connection to MongoDB."""
         try:
+            import certifi
             self.client = AsyncIOMotorClient(
                 settings.mongodb_uri,
                 maxPoolSize=settings.max_mongodb_connections,
                 minPoolSize=2,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=10000,
+                serverSelectionTimeoutMS=10000,
+                connectTimeoutMS=20000,
+                tlsCAFile=certifi.where()
             )
             self.db = self.client[settings.mongodb_db_name]
             
-            # Test connection
-            await self.client.admin.command('ping')
-            logger.info(f"Connected to MongoDB: {settings.mongodb_db_name}")
+            # Test connection (with timeout to avoid hanging startup)
+            try:
+                import asyncio
+                await asyncio.wait_for(self.client.admin.command('ping'), timeout=5.0)
+                logger.info(f"Connected to MongoDB: {settings.mongodb_db_name}")
+            except Exception as ping_e:
+                logger.warning(f"MongoDB ping failed, but proceeding: {ping_e}")
+
             
             # Create indexes
             await self._create_indexes()
@@ -51,10 +58,12 @@ class MongoDB:
     def get_sync_client(self) -> MongoClient:
         """Get synchronous MongoDB client for Celery tasks."""
         if not self.sync_client:
+            import certifi
             self.sync_client = MongoClient(
                 settings.mongodb_uri,
                 maxPoolSize=settings.max_mongodb_connections,
                 minPoolSize=2,
+                tlsCAFile=certifi.where()
             )
         return self.sync_client
     

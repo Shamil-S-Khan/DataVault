@@ -30,15 +30,16 @@ class Settings(BaseSettings):
     # LLM API
     gemini_api_key: Optional[str] = None
     grok_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
     huggingface_api_key: Optional[str] = None  # HuggingFace Inference API
-    llm_provider: str = "huggingface"  # "gemini" or "huggingface"
+    llm_provider: str = "huggingface"  # "gemini", "huggingface", "grok", or "groq"
     
     # Application Settings
     environment: str = "development"
     debug: bool = True
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: List[str] = ["http://localhost:3000"]
+    cors_origins: List[str] | str = ["http://localhost:3000"]
     
     # Celery Configuration
     celery_broker_url: str
@@ -59,6 +60,9 @@ class Settings(BaseSettings):
     
     # Sentry
     sentry_dsn: Optional[str] = None
+    
+    # Feature Gating
+    disable_tier_gating: bool = True
     
     # NextAuth
     nextauth_secret: str = "dev-secret"
@@ -94,6 +98,11 @@ class Settings(BaseSettings):
         """Backwards-compatible Redis resolution for local/dev envs."""
         if not self.redis_url:
             self.redis_url = "redis://localhost:6379"
+        
+        # Fallback for Groq key if user set it as GROK_API_KEY
+        if not self.groq_api_key and self.grok_api_key:
+            self.groq_api_key = self.grok_api_key
+            
         return self
         
     @property

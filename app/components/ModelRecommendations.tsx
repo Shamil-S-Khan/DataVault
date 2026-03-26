@@ -44,7 +44,7 @@ export default function ModelRecommendations({ datasetId }: ModelRecommendations
     const fetchRecommendations = async () => {
         setLoading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${datasetId}/models?limit=5`)
             const result = await response.json()
 

@@ -1,6 +1,6 @@
 """
 LLM tasks for dataset intelligence analysis.
-Runs Gemini-powered analysis asynchronously via Celery.
+Runs LLM-powered analysis asynchronously via Celery (supports Gemini, Grok, Groq, HuggingFace).
 """
 from celery import shared_task
 from bson import ObjectId
@@ -115,7 +115,7 @@ def batch_analyze_datasets(dataset_ids: list, force_refresh: bool = False, rate_
     Args:
         dataset_ids: List of dataset IDs (string representations)
         force_refresh: Force re-analysis even if cached
-        rate_limit_delay: Seconds to wait between each task (default 3s for Gemini free tier)
+        rate_limit_delay: Seconds to wait between each task (default 1s for Groq)
         
     Returns:
         dict with batch analysis results
@@ -189,7 +189,7 @@ def refresh_all_intelligence(limit: int = None, force_refresh: bool = False, rat
     Args:
         limit: Optional limit on number of datasets
         force_refresh: Force re-analysis even if cached
-        rate_limit_delay: Seconds to wait between tasks (default 3.0 for Gemini free tier)
+        rate_limit_delay: Seconds to wait between tasks (default 1.0 for Groq)
         
     Returns:
         dict with refresh results

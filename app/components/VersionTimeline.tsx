@@ -43,7 +43,7 @@ export default function VersionTimeline({ datasetId }: VersionTimelineProps) {
     const fetchData = async () => {
         setLoading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
 
             const [versionsRes, driftRes] = await Promise.all([
                 fetch(`${apiUrl}/api/datasets/${datasetId}/versions`),

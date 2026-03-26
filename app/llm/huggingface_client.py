@@ -3,7 +3,7 @@ HuggingFace Inference API client for dataset analysis.
 Alternative to Gemini API with free tier limits.
 Uses HuggingFace Hub's serverless inference API.
 """
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 import logging
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -38,6 +38,60 @@ class HuggingFaceClient:
             self.enabled = False
             logger.warning("HuggingFace API key not found, LLM features disabled")
     
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+        model: str = None
+    ) -> Optional[str]:
+        """
+        Generate a chat response using HuggingFace Router.
+        
+        Args:
+            messages: List of chat messages [{"role": "user", "content": "..."}]
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            model: Optional specific model to use
+            
+        Returns:
+            Generated response or None on failure
+        """
+        if not self.enabled:
+            return None
+        
+        use_model = model or self.model
+        url = self.base_url
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": use_model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if "choices" in result and len(result["choices"]) > 0:
+                        return result["choices"][0]["message"]["content"].strip()
+                    return None
+                else:
+                    logger.warning(f"HF Router chat error: {response.status_code} - {response.text[:200]}")
+                    return None
+        except Exception as e:
+            logger.error(f"HF Router chat exception: {e}")
+            return None
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=60)

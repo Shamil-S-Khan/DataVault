@@ -5,7 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import {
     ArrowLeftIcon, ArrowDownTrayIcon, GlobeAltIcon, TagIcon, CalendarIcon,
     EyeIcon, ChevronLeftIcon, ChevronRightIcon, HeartIcon, CloudArrowDownIcon,
-    UserGroupIcon, ChartBarIcon, SparklesIcon, XMarkIcon, LinkIcon, ShieldCheckIcon
+    UserGroupIcon, ChartBarIcon, SparklesIcon, XMarkIcon, LinkIcon, ShieldCheckIcon,
+    ClockIcon, ExclamationCircleIcon
 } from '@heroicons/react/24/outline'
 import Badge from '../../components/Badge'
 import DarkModeToggle from '../../components/DarkModeToggle'
@@ -24,6 +25,13 @@ import DatasetCardGen from '../../components/DatasetCardGen'
 import QualityScore from '../../components/QualityScore'
 import GQIScore from '../../components/GQIScore'
 import MLRecommendations from '../../components/MLRecommendations'
+import DatasetChat from '../../components/DatasetChat'
+import DatasetCodeSnippet from '../../components/DatasetCodeSnippet'
+import BenchmarkTable from '../../components/BenchmarkTable'
+import TaskFitnessChart from '../../components/TaskFitnessChart'
+import { ChatBubbleLeftRightIcon, BellIcon, StarIcon } from '@heroicons/react/24/outline'
+import DriftAlertBanner from '../../components/DriftAlertBanner'
+import DatasetDriftTimeline from '../../components/DatasetDriftTimeline'
 
 interface Dataset {
     id: string
@@ -103,12 +111,17 @@ export default function DatasetDetailPage() {
     const [showSamples, setShowSamples] = useState(false)
     const [currentPage, setCurrentPage] = useState(1)
     const [imageModalUrl, setImageModalUrl] = useState<string | null>(null)
-    const [activeTab, setActiveTab] = useState<'overview' | 'samples' | 'ai-analysis' | 'intelligence'>('overview')
+    const [activeTab, setActiveTab] = useState<'overview' | 'samples' | 'ai-analysis' | 'intelligence' | 'chat'>('overview')
     const [isAnalyzing, setIsAnalyzing] = useState(false)
     const [analysisError, setAnalysisError] = useState<string | null>(null)
     const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
     const [pollingStartTime, setPollingStartTime] = useState<number | null>(null)
     const [pendingAutoSwitch, setPendingAutoSwitch] = useState(false) // Track if we should auto-switch after analysis
+    const [fitnessData, setFitnessData] = useState<any>(null)
+    const [fitnessLoading, setFitnessLoading] = useState(false)
+    const [driftData, setDriftData] = useState<any>(null)
+    const [driftEvents, setDriftEvents] = useState<any[]>([])
+    const [isStarred, setIsStarred] = useState(false)
 
 
     useEffect(() => {
@@ -132,11 +145,34 @@ export default function DatasetDetailPage() {
         }
     }, [showSamples, dataset])
 
+    useEffect(() => {
+        if (activeTab === 'intelligence' && dataset && !fitnessData) {
+            fetchFitnessData()
+        }
+    }, [activeTab, dataset])
+    
+    const fetchFitnessData = async () => {
+        if (!dataset) return
+        setFitnessLoading(true)
+        try {
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
+            const response = await fetch(`${apiUrl}/api/datasets/${dataset.id}/fitness`)
+            const data = await response.json()
+            if (data.status === 'success') {
+                setFitnessData(data.fitness)
+            }
+        } catch (err) {
+            console.error('Failed to fetch fitness data:', err)
+        } finally {
+            setFitnessLoading(false)
+        }
+    }
+
     const fetchDatasetDetails = async (id: string) => {
         setLoading(true)
         setError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${id}`)
 
             if (!response.ok) {
@@ -145,10 +181,49 @@ export default function DatasetDetailPage() {
 
             const data = await response.json()
             setDataset(data)
+            setIsStarred(data.is_starred || false)
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch dataset')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const fetchDriftData = async () => {
+        if (!params.id) return
+        try {
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
+            const [driftRes, eventsRes] = await Promise.all([
+                fetch(`${apiUrl}/api/datasets/${params.id}/drift`),
+                fetch(`${apiUrl}/api/datasets/${params.id}/drift-events`)
+            ])
+            
+            if (driftRes.ok) {
+                const drift = await driftRes.json()
+                setDriftData(drift)
+            }
+            if (eventsRes.ok) {
+                const events = await eventsRes.json()
+                setDriftEvents(events.events || [])
+            }
+        } catch (err) {
+            console.error('Failed to fetch drift data:', err)
+        }
+    }
+
+    const handleToggleStar = async () => {
+        if (!dataset) return
+        try {
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
+            const response = await fetch(`${apiUrl}/api/datasets/${dataset.id}/star`, {
+                method: 'POST'
+            })
+            if (response.ok) {
+                const data = await response.json()
+                setIsStarred(data.is_starred)
+            }
+        } catch (err) {
+            console.error('Failed to toggle star:', err)
         }
     }
 
@@ -158,7 +233,7 @@ export default function DatasetDetailPage() {
         setSamplesLoading(true)
         setSamplesError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${dataset.id}/samples?page=${page}&limit=10`)
 
             if (!response.ok) {
@@ -190,7 +265,7 @@ export default function DatasetDetailPage() {
                 return false
             }
 
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${datasetId}/intelligence`)
 
             if (response.ok) {
@@ -237,7 +312,7 @@ export default function DatasetDetailPage() {
             setPollingStartTime(Date.now())
             setPendingAutoSwitch(true) // User initiated, so we'll auto-switch when done
 
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${dataset.id}/analyze`, {
                 method: 'POST'
             })
@@ -714,8 +789,31 @@ export default function DatasetDetailPage() {
                                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500 to-purple-500"></div>
                             )}
                         </button>
+                        <button
+                            onClick={() => setActiveTab('chat')}
+                            className={`relative px-8 py-4 font-semibold transition-all duration-300 flex items-center gap-2 ${activeTab === 'chat'
+                                ? 'text-primary-600 dark:text-primary-400'
+                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                                }`}
+                        >
+                            <ChatBubbleLeftRightIcon className="h-5 w-5" />
+                            Chat
+                            {activeTab === 'chat' && (
+                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500 to-purple-500"></div>
+                            )}
+                        </button>
                     </div>
                 </div>
+
+                {activeTab === 'chat' && (
+                    <div className="animate-fade-in-up">
+                        <DatasetChat
+                            datasetId={dataset.id}
+                            datasetName={dataset.name}
+                            isProUser={true}
+                        />
+                    </div>
+                )}
 
                 {activeTab === 'overview' && (
                     <>
@@ -832,6 +930,7 @@ export default function DatasetDetailPage() {
                                 {dataset.description || 'No description available'}
                             </p>
                         </div>
+
 
                         {/* Tags */}
                         {dataset.source?.source_metadata?.tags && dataset.source.source_metadata.tags.length > 0 && (
@@ -1247,10 +1346,12 @@ export default function DatasetDetailPage() {
                         {/* Global Quality Index (GQI) */}
                         <GQIScore datasetId={dataset.id} />
 
-                        {/* Quality Score & ML Recommendations */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <QualityScore datasetId={dataset.id} showBreakdown={true} />
-                            <MLRecommendations datasetId={dataset.id} limit={5} />
+
+                        {/* Task Fitness Chart & Benchmarks */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <TaskFitnessChart taskFitness={fitnessData?.task_fitness} />
+                            <BenchmarkTable benchmarks={(dataset as any).benchmarks} />
                         </div>
 
                         {/* Fitness Score & License Safety */}
@@ -1259,9 +1360,8 @@ export default function DatasetDetailPage() {
                             <LicenseBadge datasetId={dataset.id} />
                         </div>
 
-                        {/* Model Recommendations & Bias Dashboard */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <ModelRecommendations datasetId={dataset.id} />
+                        {/* Bias Dashboard */}
+                        <div className="grid grid-cols-1 gap-6">
                             <BiasChart datasetId={dataset.id} />
                         </div>
 
@@ -1273,13 +1373,28 @@ export default function DatasetDetailPage() {
 
                         {/* Dataset Card Generator */}
                         <DatasetCardGen datasetId={dataset.id} />
+
+                        {/* Drift Alert Banner */}
+                        {driftData && (
+                            <DriftAlertBanner 
+                                datasetId={dataset.id}
+                                driftScore={driftData.drift_score}
+                                alerts={driftData.alerts}
+                                isStarred={isStarred}
+                                onToggleStar={handleToggleStar}
+                            />
+                        )}
+
+                        {/* Drift History Timeline */}
+                        <DatasetDriftTimeline events={driftEvents} />
+
+                        {/* Code Snippet - moved here for better visibility in technical context */}
+                        <DatasetCodeSnippet datasetId={dataset.id} />
                     </div>
                 )}
 
-                {/* Similar Datasets - Always visible at bottom */}
-                <div className="mt-8">
-                    <SimilarDatasets datasetId={dataset.id} />
-                </div>
+                {/* Persistent Bottom Slider for Recommendations */}
+                <MLRecommendations datasetId={dataset.id} variant="bottom-slider" limit={10} />
             </main>
 
             {/* Image Modal */}

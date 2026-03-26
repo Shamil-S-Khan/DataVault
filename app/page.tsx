@@ -70,7 +70,7 @@ export default function HomePage() {
         setLoading(true)
         setFetchError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const params = new URLSearchParams({
                 page: currentPage.toString(),
                 limit: pageSize.toString(),
@@ -104,7 +104,7 @@ export default function HomePage() {
         setLoading(true)
         setFetchError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/search?query=${encodeURIComponent(searchQuery)}`, {
                 method: 'POST',
             })

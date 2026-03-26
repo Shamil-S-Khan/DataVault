@@ -70,7 +70,7 @@ export default function SyntheticSuitability({ datasetId }: SyntheticSuitability
     const fetchData = async () => {
         setLoading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const res = await fetch(`${apiUrl}/api/datasets/${datasetId}/synthetic`)
             const data = await res.json()
 

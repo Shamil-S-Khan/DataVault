@@ -70,6 +70,10 @@ class DatasetIntelligenceAnalyzer:
             from app.llm.gemini_client import gemini_client
             self.client = gemini_client
             logger.info("Using Gemini API for dataset intelligence")
+        elif self.llm_provider == 'groq':
+            from app.llm.groq_client import groq_client
+            self.client = groq_client
+            logger.info("Using Groq (LPU) API for dataset intelligence")
         else:
             from app.llm.huggingface_client import huggingface_client
             self.client = huggingface_client

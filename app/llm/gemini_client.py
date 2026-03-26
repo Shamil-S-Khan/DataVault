@@ -65,7 +65,74 @@ class GeminiClient:
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             raise
-    
+            
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=60)
+    )
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 500,
+        temperature: float = 0.7
+    ) -> Optional[str]:
+        """
+        Generate a chat response using Gemini API.
+        
+        Args:
+            messages: List of chat messages [{"role": "user", "content": "..."}]
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            
+        Returns:
+            Generated response or None on failure
+        """
+        if not self.enabled:
+            return None
+        
+        try:
+            # Convert messages to Gemini format or just a single prompt for simplicity
+            # For now, let's just use the last user message + system context if we want to stay simple
+            # but better to handle the full history
+            
+            # Separate system prompt if present
+            system_instruction = ""
+            chat_history = []
+            
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_instruction = msg["content"]
+                elif msg["role"] == "user":
+                    chat_history.append({"role": "user", "parts": [msg["content"]]})
+                elif msg["role"] == "assistant":
+                    chat_history.append({"role": "model", "parts": [msg["content"]]})
+            
+            # Re-initialize with system instruction if we can
+            if system_instruction:
+                model = genai.GenerativeModel('gemini-1.5-flash-latest', system_instruction=system_instruction)
+            else:
+                model = self.model
+                
+            # Use the last message as the prompt, others as history
+            if not chat_history:
+                return None
+                
+            last_msg = chat_history.pop()
+            chat = model.start_chat(history=chat_history)
+            
+            response = chat.send_message(
+                last_msg["parts"][0],
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            )
+            
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"Gemini Chat API error: {e}")
+            raise    
     async def generate_summary(
         self,
         dataset_name: str,

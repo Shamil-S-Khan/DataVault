@@ -71,7 +71,7 @@ export default function GQIScore({ datasetId, compact = false }: GQIScoreProps) 
         setLoading(true)
         setError(null)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const res = await fetch(`${apiUrl}/api/datasets/${datasetId}/gqi`)
             if (!res.ok) throw new Error('Failed to fetch GQI')
             const data = await res.json()

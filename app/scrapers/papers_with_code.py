@@ -243,6 +243,62 @@ class PapersWithCodeScraper(BaseScraper):
             logger.error(f"Error normalizing dataset: {e}")
             return None
     
+    async def get_dataset_enrichment(self, slug: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch deep metadata for a specific dataset by its slug.
+        Includes benchmarks, SOTA results, and task taxonomy.
+        """
+        try:
+            logger.info(f"Enriching dataset from PWC: {slug}")
+            
+            # 1. Fetch main dataset details
+            detail_url = f"{self.BASE_URL}/datasets/{slug}/"
+            response = self.session.get(detail_url, timeout=15)
+            if response.status_code != 200:
+                logger.warning(f"PWC detail fetch failed for {slug}: {response.status_code}")
+                return None
+                
+            data = response.json()
+            
+            # 2. Fetch benchmarks
+            benchmarks_url = f"{self.BASE_URL}/datasets/{slug}/benchmarks/"
+            bench_response = self.session.get(benchmarks_url, timeout=15)
+            benchmarks = []
+            if bench_response.status_code == 200:
+                bench_data = bench_response.json()
+                for b in bench_data.get('results', []):
+                    benchmarks.append({
+                        'task': b.get('task'),
+                        'metric': b.get('metric'),
+                        'sota_value': b.get('best_result'),
+                        'paper_url': b.get('paper_url'),
+                        'model_name': b.get('best_model')
+                    })
+            
+            # 3. Extract Tasks
+            tasks = []
+            # Check for tasks in the detail response or inferred from benchmarks
+            for b in benchmarks:
+                if b.get('task') and b['task'] not in tasks:
+                    tasks.append(b['task'])
+            
+            # 4. Result
+            return {
+                'benchmarks': benchmarks,
+                'tasks': tasks,
+                'metadata': {
+                    'pwc_id': data.get('id'),
+                    'full_name': data.get('full_name'),
+                    'paper_count': data.get('paper_count', 0),
+                    'citation': data.get('citation')
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"PWC enrichment error for {slug}: {e}")
+            return None
+
+
     def _infer_domain(self, description: str, name: str) -> str:
         """Infer dataset domain from description and name."""
         text = (description + " " + name).lower()

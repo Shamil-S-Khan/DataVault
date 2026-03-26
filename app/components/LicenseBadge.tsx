@@ -61,7 +61,7 @@ export default function LicenseBadge({
     const fetchLicenseAnalysis = async () => {
         setLoading(true)
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001').replace(/\/api\/?$/, '')
             const response = await fetch(`${apiUrl}/api/datasets/${datasetId}/license`)
             const data = await response.json()
 
