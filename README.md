@@ -1,679 +1,597 @@
 # DataVault
 
-**Intelligent Dataset Discovery Platform for ML Research and Industry**
+**Intelligent Dataset Discovery & Analysis Platform for ML Research and Industry**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Next.js](https://img.shields.io/badge/Next.js-14.1-black)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109-green)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-18.2-61DAFB)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6)](https://www.typescriptlang.org/)
 
-![DataVault Dashboard](docs/images/dashboard.png)
-*Main dashboard showing dataset discovery and filtering capabilities*
+---
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Project Structure](#project-structure)
-- [Technology Stack](#technology-stack)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Quick Start](#quick-start)
+4. [Project Structure](#project-structure)
+5. [Architecture](#architecture)
+6. [Technology Stack](#technology-stack)
+7. [Installation & Setup](#installation--setup)
+8. [Configuration](#configuration)
+9. [Running Services](#running-services)
+10. [API Documentation](#api-documentation)
+11. [Development Guide](#development-guide)
+12. [Troubleshooting](#troubleshooting)
+13. [Contributing](#contributing)
+14. [License](#license)
 
 ## Overview
 
-DataVault is an platform designed to automatically discover, catalog, and analyze datasets from multiple machine learning and data science sources. The system combines web scraping, natural language processing, and machine learning to provide researchers and practitioners with comprehensive dataset insights.
+DataVault is a sophisticated platform designed to automatically discover, catalog, analyze, and visualize datasets from multiple machine learning and data science sources. Built with modern web technologies (Next.js + FastAPI), the system combines web scraping, natural language processing, vector embeddings, and machine learning to provide researchers, data scientists, and ML practitioners with comprehensive dataset insights and discovery capabilities.
 
-### Core Capabilities
+### What Makes DataVault Unique
 
-- **Automated Data Collection**: Continuously scrapes and indexes datasets from 10+ major data repositories
-- **Intelligent Analysis**: Leverages Google Gemini AI to generate summaries, extract metadata, and provide insights
-- **Trend Forecasting**: Uses statistical models (Prophet, ARIMA) to predict dataset popularity and relevance
-- **Quality Assessment**: Multi-dimensional quality scoring based on documentation, metadata completeness, and community engagement
-- **Semantic Search**: Vector-based search using sentence transformers for natural language queries
-- **Bias Detection**: Analyzes datasets for potential biases using specialized ML models
+- **Multi-Source Aggregation**: Unified interface for 10+ dataset repositories
+- **AI-Powered Intelligence**: Google Gemini integration for smart summaries and metadata extraction
+- **Advanced Analytics**: Trend forecasting, quality scoring, bias detection, and statistical analysis
+- **Vector Search**: Semantic understanding of datasets through embedding-based search
+- **Real-time Health Monitoring**: Continuous dataset availability and quality checks
+- **Production-Ready**: Docker containerized, Redis-backed caching, MongoDB persistence
+- **Beautiful UI**: Modern, responsive React interface with interactive visualizations
 
-![Search Interface](docs/images/search.png)
-*Advanced search with semantic understanding and intelligent filters*
+### Target Users
+
+- **ML Researchers**: Discover datasets for academic papers and experiments
+- **Data Scientists**: Find appropriate datasets for project requirements
+- **Data Engineers**: Catalog and monitor data sources
+- **Data Curators**: Maintain dataset quality and metadata standards
+- **Enterprise**: Build custom dataset catalogs for internal use
+
+---
 
 ## Features
 
-### Data Acquisition
+### 🔍 Data Discovery & Search
 
-The platform includes dedicated scrapers for:
+- **Semantic Search**: Natural language queries understood through embeddings
+- **Advanced Filters**: Filter by modality (text, image, audio), size, license, quality score
+- **Trending Datasets**: AI-powered trend detection and forecasting
+- **Dataset Recommendations**: Collaborative filtering based on user preferences
+- **Live Access Testing**: Verify datasets are still accessible before offering
 
-- **HuggingFace Datasets**: Community-contributed ML datasets
-- **Kaggle**: Competition and community datasets
-- **Papers with Code**: Academic research datasets
-- **OpenML**: Machine learning datasets with standardized metadata
-- **Zenodo**: Research data repository
-- **Data.gov**: US government open data
-- **AWS Open Data**: Amazon's public dataset registry
-- **Harvard Dataverse**: Academic data repository
-- **UCI Machine Learning Repository**: Classic ML datasets
+### 📊 Analytics & Insights
 
-Each scraper implements:
-- Rate limiting and retry logic
-- Metadata extraction and normalization
-- Duplicate detection using fuzzy matching and embeddings
-- Size estimation and file format analysis
+- **Quality Scoring**: Multi-dimensional quality assessment (0-100 scale)
+  - Documentation completeness
+  - Metadata richness
+  - Community engagement metrics
+  - Update frequency
+  - License clarity
+  
+- **Trend Forecasting**: Predict future popularity using Prophet, ARIMA, growth analysis
+- **Bias Analysis**: Detect potential dataset biases and fairness issues
+- **Statistical Metrics**: Distribution analysis, correlation heatmaps, summary statistics
 
-### Intelligence & Analytics
+### 📁 Dataset Management
 
-**LLM-Powered Analysis**
-- Automated dataset summarization using Google Gemini
-- Use case identification and task classification
-- Domain and modality detection
-- Key feature extraction from documentation
+- **Upload Wizard**: Multi-step dataset upload with validation
+- **File Processing**: Automatic format detection (CSV, JSON, Parquet, Excel, etc.)
+- **Metadata Extraction**: Extract headers, schema, data types, sample data
+- **Citation Tracking**: Generate and track dataset citations
+- **Version Control**: Track dataset updates and modifications
+- **Access History**: Monitor dataset access patterns
 
-**Quality Scoring System**
-- Documentation completeness score
-- Metadata richness evaluation
-- Community engagement metrics (downloads, stars, forks)
-- Data freshness and update frequency
+### 🧬 Advanced ML Features
 
-**Trend Detection**
-- Time series forecasting of dataset popularity
-- Emerging domain identification
-- Citation and usage trend analysis
-- Related dataset recommendations
+- **DNA Fingerprinting**: Unique identifier for each dataset based on statistical properties
+- **Embedding Explorer**: Visualize high-dimensional embeddings in interactive 2D/3D
+- **Outlier Scanner**: Identify anomalies using statistical and ML methods
+- **Training Mix Planner**: Optimize dataset combinations for balanced training
+- **Nutritional Label**: Quick visual assessment of dataset quality and characteristics
 
-![Trend Detection](docs/images/trending.png)
-*Real-time trend scoring and popularity forecasting for datasets*
+### 📈 Visualization & Exploration
 
-**Bias & Fairness Analysis**
-- Demographic representation analysis
-- Dataset balance metrics
-- Fairness constraint validation
-- Potential bias warnings
+- **Interactive Charts**: Powered by Recharts, Plotly, D3.js with export capabilities
+- **Force Graph**: Network visualization of dataset relationships
+- **Trend Visualization**: Time series and forecast displays
+- **PII Detection Badge**: Visual indicator of personally identifiable information
 
-![Analytics Dashboard](docs/images/analytics.png)
-*Comprehensive analytics showing trends, quality metrics, and recommendations*
+### 🔄 Integration & Automation
 
-### User Interface
+- **Celery Task Queue**: Async processing for health checks, embeddings, analytics
+- **Redis Caching**: High-performance caching for queries, embeddings, sessions
+- **MongoDB**: Document-based storage with flexible schema and efficient indexing
+---
 
-**Responsive Design**
-- Mobile-first architecture
-- Progressive web app capabilities
-- System-aware dark/light mode
-- Accessibility compliant (WCAG 2.1)
-
-**Interactive Components**
-- Real-time search with autocomplete
-- Multi-dimensional filtering (domain, modality, quality, source, license)
-- Interactive visualizations using Plotly and Recharts
-- Dataset comparison views
-- Version timeline tracking
-
-**Key Components**
-- `DatasetCard`: Comprehensive dataset preview
-- `FilterBar`: Advanced filtering interface
-- `SemanticSearch`: Natural language search
-- `BiasChart`: Bias analysis visualization
-- `TrendVisualization`: Time series trend display
-- `QualityScore`: Multi-factor quality indicator
-- `ModelRecommendations`: ML model suggestions based on dataset characteristics
-
-## Architecture
-
-DataVault follows a microservices architecture with separate frontend, backend, and worker services orchestrated via Docker Compose.
-
-### System Diagram
-
-```
-┌──────────────────────────────────────────────────┐
-│              Next.js Frontend (Port 3000)         │
-│  ┌────────────────────────────────────────────┐  │
-│  │  React Components + TypeScript             │  │
-│  │  - Dataset Discovery Interface             │  │
-│  │  - Analytics Dashboard                     │  │
-│  │  - Search & Filter System                  │  │
-│  └────────────────────────────────────────────┘  │
-└─────────────────────┬────────────────────────────┘
-                      │ REST API (HTTP/JSON)
-                      ▼
-┌──────────────────────────────────────────────────┐
-│            FastAPI Backend (Port 8000)            │
-│  ┌────────────────────────────────────────────┐  │
-│  │  API Routes                                │  │
-│  │  - /api/datasets  - /api/search           │  │
-│  │  - /api/analytics - /api/admin            │  │
-│  └────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────┐  │
-│  │  Business Logic                            │  │
-│  │  - Query Processing                        │  │
-│  │  - Data Validation                         │  │
-│  │  - Response Formatting                     │  │
-│  └────────────────────────────────────────────┘  │
-└─────────────┬──────────────┬─────────────────────┘
-              │              │
-       ┌──────┴──────┐  ┌───┴──────┐
-       │             │  │          │
-       ▼             ▼  ▼          ▼
-┌────────────┐  ┌────────────┐  ┌──────────────────┐
-│  MongoDB   │  │   Redis    │  │ Celery Workers   │
-│  Atlas     │  │  (Port     │  │                  │
-│            │  │   6379)    │  │ - Scrapers       │
-│ Documents: │  │            │  │ - ML Tasks       │
-│ - datasets │  │ Cache:     │  │ - LLM Analysis   │
-│ - users    │  │ - queries  │  │ - Trend Calc     │
-│ - reviews  │  │ - results  │  │                  │
-│ - analytics│  │ - sessions │  │ Celery Beat:     │
-│            │  │            │  │ - Scheduled Jobs │
-└────────────┘  └────────────┘  └──────────────────┘
-```
-
-### Component Interaction
-
-1. **User Request Flow**:
-   - User interacts with Next.js frontend
-   - Frontend makes API calls to FastAPI backend
-   - Backend queries MongoDB or checks Redis cache
-   - Results are formatted and returned to frontend
-
-2. **Background Processing**:
-   - Celery Beat schedules periodic scraping tasks
-   - Celery Workers execute scraping jobs in parallel
-   - Scraped data is validated and stored in MongoDB
-   - LLM analysis tasks are queued for dataset enrichment
-
-3. **Search & Discovery**:
-   - User query is processed by semantic search module
-   - Query embeddings are generated using sentence transformers
-   - Vector similarity search is performed using FAISS
-   - Results are ranked by relevance and quality score
-
-## Installation
+## Quick Start
 
 ### Prerequisites
 
-- **Docker Desktop** (recommended) or Docker Engine + Docker Compose
-- **Node.js** 18+ (for local development)
-- **Python** 3.10+ (for local development)
-- **MongoDB Atlas** account (free tier available at mongodb.com)
-- **Redis** (provided via Docker or Upstash free tier)
-- **API Keys** (optional but recommended):
-  - Google Gemini API key for LLM features
-  - Kaggle API credentials for Kaggle datasets
-  - GitHub Personal Access Token for rate limit increase
-  - HuggingFace API token for model downloads
+- Python 3.10+
+- Node.js 18+
+- Docker & Docker Compose
+- Git
 
-### Docker Installation (Recommended)
+### 5-Minute Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/Shamil-S-Khan/DataVault.git
 cd DataVault
 
-# Copy environment template and configure
+# Copy environment template
 cp .env.example .env
 
-# Edit .env with your credentials (see Configuration section)
-nano .env  # or use any text editor
+# Install Python dependencies
+python -m venv .venv
+.venv\Scripts\activate  # Windows
+# source .venv/bin/activate  # macOS/Linux
+pip install -r requirements.txt
 
-# Build and start all services
+# Install Node dependencies
+npm install
+
+# Start Redis container
+docker-compose up -d redis
+
+# Terminal 1: Start Backend
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2: Start Frontend
+npm run dev
+```
+
+Visit:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+---
+
+## Project Structure
+
+Key directories:
+- **app/** - Backend FastAPI application and React frontend components
+- **app/routes/** - API endpoint definitions
+- **app/analytics/** - Data analysis and ML metrics
+- **app/components/** - React UI components
+- **app/tasks/** - Celery async tasks for background processing
+- **app/services/** - Business logic layer
+- **app/scrapers/** - Data source connectors
+- **docs/** - Documentation and guides
+- **scripts/** - Utility scripts
+
+For detailed structure, see [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
+
+---
+
+## Architecture
+
+### System Overview
+
+```
+┌──────────────────────────────────────────────────┐
+│    Frontend: Next.js + React (Port 3000)        │
+│    TypeScript • Tailwind • React Query          │
+└────────────────────┬─────────────────────────────┘
+                     │ REST/TRPC API
+                     ▼
+┌──────────────────────────────────────────────────┐
+│   Backend: FastAPI + Uvicorn (Port 8000)        │
+│   Python • Pydantic • PyMongo                   │
+└──────┬──────────────────────────────┬────────────┘
+       │                              │
+       ▼                              ▼
+┌──────────────────┐        ┌──────────────────┐
+│   MongoDB Atlas  │        │  Redis + Celery  │
+│   (Persistence)  │        │  (Queue + Cache) │
+└──────────────────┘        └────────┬─────────┘
+                                     │
+                          ┌──────────▼─────────┐
+                          │ Celery Workers     │
+                          │ (Async Tasks)      │
+                          └────────────────────┘
+
+External Services:
+- Google Gemini API (AI Analysis)
+- HuggingFace (Embeddings & Models)
+- Kaggle API (Dataset Scraping)
+- OpenML (Dataset Repository)
+```
+
+### Data Flow
+
+1. User sends request from frontend
+2. Next.js sends API call to FastAPI backend
+3. Backend checks Redis cache for results
+4. If cache miss, queries MongoDB
+5. Long operations queued to Celery workers
+6. External APIs called as needed (Gemini, HF, Kaggle)
+7. Results cached in Redis
+8. Response returned to frontend
+9. React components render the data
+
+---
+
+## Technology Stack
+
+### Frontend
+- **Framework**: Next.js 14.1.0 with React 18.2
+- **Language**: TypeScript 5.3
+- **Styling**: Tailwind CSS 3.4, PostCSS
+- **UI Components**: Headless UI, Heroicons
+- **Charts**: Recharts, Plotly.js, D3.js, react-force-graph
+- **State Management**: React Query 4.36, React Hook Form 7.49
+- **API Client**: TRPC 10.45 for type-safe API calls
+
+### Backend
+- **Framework**: FastAPI 0.109.0
+- **Server**: Uvicorn 0.27 (ASGI)
+- **Validation**: Pydantic 2.5
+- **Database**: MongoDB with PyMongo 4.6
+- **Cache**: Redis 5.0
+- **Queue**: Celery 5.3
+- **Async**: Motor 3.3 (async MongoDB driver)
+
+### ML & AI
+- **LLM**: Google Generative AI (Gemini)
+- **Embeddings**: sentence-transformers 2.3
+- **Vector Search**: FAISS 1.7 for similarity search
+- **Forecasting**: Prophet 1.1, statsmodels 0.14 (ARIMA)
+- **Anomaly Detection**: scikit-learn 1.4 (Isolation Forest)
+- **Scientific**: NumPy 1.26, Pandas 2.1, SciPy 1.11
+
+### Data Sources
+- HuggingFace, Kaggle, OpenML, Papers with Code, Zenodo, Data.gov, AWS Open Data, UCI ML
+
+### DevOps
+- **Containers**: Docker & Docker Compose
+- **Process Management**: Supervisor (for production)
+- **Configuration**: Environment variables (.env)
+
+---
+
+## Installation & Setup
+
+### Step 1: Clone Repository
+
+```bash
+git clone https://github.com/Shamil-S-Khan/DataVault.git
+cd DataVault
+```
+
+### Step 2: Python Environment
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Step 3: Node Environment
+
+```bash
+npm install
+npm run type-check  # Optional: verify types
+```
+
+### Step 4: Environment Configuration
+
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+```
+
+### Step 5: Start Services
+
+```bash
+# Terminal 1: Start Redis
+docker-compose up redis
+
+# Terminal 2: Start Backend
+.venv\Scripts\activate
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 3: Start Frontend
+npm run dev
+
+# Terminal 4: Start Celery (optional, for background tasks)
+celery -A app.tasks.celery_app worker --loglevel=info
+```
+
+---
+
+## Configuration
+
+### Environment Variables (.env)
+
+```bash
+# API Keys & Credentials
+GEMINI_API_KEY=your_gemini_api_key
+KAGGLE_USERNAME=your_kaggle_username
+KAGGLE_KEY=your_kaggle_api_key
+GITHUB_TOKEN=your_github_token
+HUGGINGFACE_API_KEY=your_hf_api_key
+
+# Database URLs
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
+MONGODB_DB_NAME=datavault
+REDIS_URL=redis://localhost:6379
+
+# Celery Configuration
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=mongodb://user:pass@cluster.mongodb.net/
+
+# LLM Settings
+LLM_PROVIDER=gemini
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# Application Settings
+DEBUG=False
+LOG_LEVEL=INFO
+MAX_UPLOAD_SIZE=1073741824
+```
+
+### Key Configuration Files
+
+- **app/config.py**: Database, Redis, API settings
+- **app/main.py**: FastAPI setup, CORS, middleware
+- **docker-compose.yml**: Redis service definition
+
+---
+
+## Running Services
+
+### Development Mode
+
+```bash
+# Backend with auto-reload
+uvicorn app.main:app --reload --port 8000
+
+# Frontend with hot reload
+npm run dev
+
+# Celery worker (separate terminal)
+celery -A app.tasks.celery_app worker --loglevel=info
+
+# Celery beat scheduler (separate terminal)
+celery -A app.tasks.celery_app beat --loglevel=info
+```
+
+### Production Mode
+
+```bash
+# Build frontend
+npm run build
+
+# Start production frontend
+npm run start
+
+# Backend with Gunicorn
+gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker
+
+# Or with Docker
+docker-compose up -d --build
+```
+
+### Docker Deployment
+
+```bash
+# Start all services
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
 
-# Access the application
-# - Frontend: http://localhost:3000
-# - Backend API: http://localhost:8000
-# - API Documentation: http://localhost:8000/docs
+# Stop services
+docker-compose down
+
+# Clean up volumes
+docker-compose down -v
 ```
 
-### Manual Installation
+---
 
-```bash
-# Clone the repository
-git clone https://github.com/Shamil-S-Khan/DataVault.git
-cd DataVault
+## API Documentation
 
-# Backend setup
-pip install -r requirements.txt
+### Interactive Docs
 
-# Frontend setup
-npm install
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
 
-# Start Redis (if not using Upstash)
-redis-server
+### Main Endpoints
 
-# Start backend (Terminal 1)
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start Celery worker (Terminal 2)
-celery -A app.tasks.celery_app worker --loglevel=info
-
-# Start Celery beat scheduler (Terminal 3)
-celery -A app.tasks.celery_app beat --loglevel=info
-
-# Start frontend (Terminal 4)
-npm run dev
+**Datasets**:
+```
+GET    /api/datasets              # List all
+GET    /api/datasets/{id}         # Get one
+POST   /api/datasets              # Create
+PUT    /api/datasets/{id}         # Update
+DELETE /api/datasets/{id}         # Delete
 ```
 
-## Configuration
-
-Create a `.env` file in the project root with the following configuration:
-
-```bash
-# Database Configuration
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
-MONGODB_DB_NAME=datavault
-
-# Redis Configuration (use Upstash for free tier)
-REDIS_URL=redis://localhost:6379
-# or for Upstash:
-# REDIS_URL=rediss://:password@host:port
-
-# Celery Configuration
-CELERY_BROKER_URL=redis://localhost:6379
-CELERY_RESULT_BACKEND=mongodb+srv://username:password@cluster.mongodb.net/
-
-# LLM Configuration
-LLM_PROVIDER=gemini  # Options: gemini, huggingface
-GEMINI_API_KEY=your_gemini_api_key_here
-
-# API Keys for Scrapers
-KAGGLE_USERNAME=your_kaggle_username
-KAGGLE_KEY=your_kaggle_api_key
-GITHUB_TOKEN=your_github_personal_access_token
-HUGGINGFACE_API_KEY=your_huggingface_token
-
-# Application Settings
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NODE_ENV=development
+**Search**:
 ```
-
-### Obtaining API Keys
-
-**Google Gemini API**:
-1. Visit https://makersuite.google.com/app/apikey
-2. Create a new API key
-3. Add to `.env` as `GEMINI_API_KEY`
-
-**Kaggle API**:
-1. Go to https://www.kaggle.com/settings/account
-2. Scroll to "API" section and click "Create New API Token"
-3. Extract username and key from downloaded `kaggle.json`
-
-**GitHub Token**:
-1. Go to https://github.com/settings/tokens
-2. Generate new token with `repo` scope
-3. Add to `.env` as `GITHUB_TOKEN`
-
-## Usage
-
-### Initial Data Population
-
-After installation, populate the database with initial datasets:
-
-```bash
-# Using Docker
-docker-compose exec backend python -m app.refresh_datasets
-
-# Or manually
-python -m app.refresh_datasets
+GET    /api/search?query=...      # Semantic search
+GET    /api/search/filters        # Get filters
+GET    /api/trending              # Trending datasets
 ```
-
-This process will:
-- Scrape initial datasets from all configured sources
-- Generate embeddings for semantic search
-- Calculate quality scores
-- Perform LLM analysis on sample datasets
-
-### API Endpoints
-
-The FastAPI backend provides comprehensive REST APIs:
-
-**Dataset Operations**:
-- `GET /api/datasets` - List datasets with pagination and filters
-- `GET /api/datasets/{id}` - Get dataset details
-- `POST /api/datasets/search` - Semantic search
-- `GET /api/datasets/{id}/similar` - Find similar datasets
 
 **Analytics**:
-- `GET /api/analytics/trends` - Dataset trend analysis
-- `GET /api/analytics/quality-distribution` - Quality score distribution
-- `GET /api/analytics/source-statistics` - Per-source statistics
-
-**Admin**:
-- `POST /api/admin/refresh-datasets` - Trigger data refresh
-- `POST /api/admin/calculate-embeddings` - Regenerate embeddings
-- `GET /api/admin/scraper-status` - Check scraper health
-
-Full API documentation is available at `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc).
-
-### Frontend Usage
-
-Access the web interface at `http://localhost:3000`:
-
-1. **Browse Datasets**: View curated dataset cards with quality indicators
-2. **Search**: Use natural language queries to find relevant datasets
-3. **Filter**: Narrow results by domain, modality, quality, license, or source
-4. **Analyze**: View trends, bias analysis, and quality metrics
-5. **Compare**: Select multiple datasets for side-by-side comparison
-6. **Recommendations**: Get ML model suggestions based on dataset characteristics
-
-## Project Structure
-
 ```
-DataVault/
-├── app/                              # Main application directory
-│   ├── components/                   # React/TypeScript components
-│   │   ├── DatasetCard.tsx          # Dataset display card
-│   │   ├── FilterBar.tsx            # Advanced filtering
-│   │   ├── SemanticSearch.tsx       # Search interface
-│   │   ├── BiasChart.tsx            # Bias visualization
-│   │   ├── QualityScore.tsx         # Quality indicator
-│   │   └── [27 total components]
-│   │
-│   ├── db/                           # Database layer
-│   │   ├── connection.py            # MongoDB connection
-│   │   ├── models.py                # Data models
-│   │   └── redis_client.py          # Redis client
-│   │
-│   ├── routes/                       # API endpoints
-│   │   ├── datasets.py              # Dataset CRUD
-│   │   ├── analytics.py             # Analytics endpoints
-│   │   ├── admin.py                 # Admin operations
-│   │   ├── users.py                 # User management
-│   │   └── reviews.py               # Dataset reviews
-│   │
-│   ├── scrapers/                     # Data collection modules
-│   │   ├── huggingface.py           # HuggingFace scraper
-│   │   ├── kaggle.py                # Kaggle scraper
-│   │   ├── papers_with_code.py      # PwC scraper
-│   │   ├── openml.py                # OpenML scraper
-│   │   ├── zenodo.py                # Zenodo scraper
-│   │   ├── datagov.py               # Data.gov scraper
-│   │   ├── aws_opendata.py          # AWS Open Data scraper
-│   │   ├── dataverse.py             # Dataverse scraper
-│   │   ├── base.py                  # Base scraper class
-│   │   ├── deduplication.py         # Duplicate detection
-│   │   └── size_fetcher.py          # File size estimation
-│   │
-│   ├── analytics/                    # ML & analytics modules
-│   │   ├── bias_analyzer.py         # Bias detection
-│   │   ├── fitness_calculator.py    # Quality scoring
-│   │   ├── forecasting.py           # Trend prediction
-│   │   ├── license_analyzer.py      # License classification
-│   │   ├── metrics.py               # Performance metrics
-│   │   ├── model_matcher.py         # Model recommendations
-│   │   ├── query_parser.py          # Query understanding
-│   │   ├── similarity_engine.py     # Dataset similarity
-│   │   ├── synthetic_analyzer.py    # Synthetic data detection
-│   │   ├── topic_modeling.py        # Topic extraction
-│   │   └── version_tracker.py       # Version management
-│   │
-│   ├── llm/                          # LLM integration
-│   │   ├── gemini_client.py         # Google Gemini client
-│   │   ├── huggingface_client.py    # HuggingFace client
-│   │   └── dataset_intelligence.py  # Dataset analysis
-│   │
-│   ├── ml/                           # ML utilities
-│   │   ├── semantic_search.py       # Vector search
-│   │   ├── quality_scorer.py        # Quality models
-│   │   ├── recommender.py           # Recommendation engine
-│   │   ├── modality_classifier.py   # Modality detection
-│   │   └── evaluation.py            # Model evaluation
-│   │
-│   ├── tasks/                        # Celery tasks
-│   │   ├── celery_app.py           # Celery configuration
-│   │   ├── scraping_tasks.py       # Scraping jobs
-│   │   ├── ml_tasks.py             # ML processing jobs
-│   │   └── llm_tasks.py            # LLM analysis jobs
-│   │
-│   ├── dataset/[id]/                # Dynamic dataset pages
-│   │   └── page.tsx                # Dataset detail page
-│   │
-│   ├── explore/                     # Explore page
-│   │   └── page.tsx                # Dataset exploration
-│   │
-│   ├── main.py                      # FastAPI application
-│   ├── config.py                    # Application configuration
-│   ├── layout.tsx                   # Root layout
-│   ├── page.tsx                     # Home page
-│   └── globals.css                  # Global styles
-│
-├── docs/                            # Documentation
-│   ├── README.md                   # Project overview
-│   ├── SETUP.md                    # Setup instructions
-│   ├── PROJECT_STRUCTURE.md        # Detailed structure
-│   └── [additional documentation]
-│
-├── scripts/                         # Utility scripts
-│   ├── fetch_dataset_sizes.py      # Size calculation utility
-│   └── archive/                    # Archived scripts
-│
-├── logs/                            # Application logs
-│   └── celery_logs.txt            # Worker logs
-│
-├── docker-compose.yml               # Docker orchestration
-├── Dockerfile                       # Backend container
-├── package.json                     # Node.js dependencies
-├── requirements.txt                 # Python dependencies
-├── next.config.js                   # Next.js configuration
-├── tsconfig.json                    # TypeScript configuration
-├── tailwind.config.js               # Tailwind CSS configuration
-├── .env.example                     # Environment template
-└── README.md                        # This file
+GET    /api/analytics/{id}        # Dataset analytics
+GET    /api/analytics/{id}/quality # Quality breakdown
+GET    /api/analytics/{id}/trends  # Trend analysis
 ```
 
-## Technology Stack
+**Uploads**:
+```
+POST   /api/uploads               # Upload
+GET    /api/uploads/{id}          # Status
+DELETE /api/uploads/{id}          # Cancel
+```
 
-### Frontend
+---
 
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Next.js | 14.1.0 | React framework with SSR/SSG |
-| React | 18.2.0 | UI library |
-| TypeScript | 5.3.3 | Type-safe JavaScript |
-| Tailwind CSS | 3.4.1 | Utility-first CSS framework |
-| Headless UI | 1.7.17 | Unstyled accessible components |
-| Heroicons | 2.1.1 | SVG icon library |
-| Plotly.js | 2.27.1 | Interactive charts |
-| Recharts | 2.10.3 | React chart library |
-| React Query | 4.36.1 | Server state management |
-| tRPC | 10.45.0 | End-to-end typesafe APIs |
+## Development Guide
 
-### Backend
+### Code Style
 
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| FastAPI | 0.109.0 | Modern Python web framework |
-| Uvicorn | 0.27.0 | ASGI server |
-| Pydantic | 2.5.3 | Data validation |
-| Celery | 5.3.6 | Distributed task queue |
-| PyMongo | 4.6.1 | MongoDB driver |
-| Motor | 3.3.2 | Async MongoDB driver |
-| Redis | 5.0.1 | Caching and message broker |
+**Python**: Follow PEP 8 using Black formatter
+**TypeScript**: Use ESLint + Prettier
 
-### Machine Learning & AI
+### Adding Features
 
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Sentence Transformers | 2.3.1 | Text embeddings |
-| Transformers | 4.36.2 | HuggingFace models |
-| PyTorch | 2.1.2 | Deep learning framework |
-| FAISS | 1.7.4 | Vector similarity search |
-| Scikit-learn | 1.4.0 | Traditional ML algorithms |
-| Prophet | 1.1.5 | Time series forecasting |
-| Statsmodels | 0.14.1 | Statistical models |
-| Gensim | 4.3.2 | Topic modeling |
-| Google Generative AI | 0.3.2 | Gemini API client |
+1. Create feature branch: `git checkout -b feature/name`
+2. Implement changes in appropriate modules
+3. Run tests: `pytest` and `npm test`
+4. Lint code: `npm run lint`
+5. Type check: `npm run type-check`
+6. Commit: `git commit -m "feat: description"`
+7. Push and open PR
 
-### Data Processing
-
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Pandas | 2.1.4 | Data manipulation |
-| NumPy | 1.26.3 | Numerical computing |
-| NetworkX | 3.2.1 | Graph analysis |
-| BeautifulSoup4 | 4.12.3 | HTML parsing |
-| Requests | 2.31.0 | HTTP library |
-| HTTPX | 0.26.0 | Async HTTP client |
-
-### Infrastructure
-
-| Technology | Purpose |
-|------------|---------|
-| Docker | Containerization |
-| Docker Compose | Multi-container orchestration |
-| MongoDB Atlas | Cloud database (free tier) |
-| Redis/Upstash | Caching layer (free tier) |
-| GitHub Actions | CI/CD pipeline |
-
-## Development
-
-### Running Tests
+### Testing
 
 ```bash
-# Run all tests
+# Backend tests
 pytest
 
-# Run with coverage
-pytest --cov=app --cov-report=html
+# With coverage
+pytest --cov=app
 
-# Run specific test file
-pytest tests/test_scrapers.py
+# Frontend tests
+npm test
 
-# Run tests in Docker
-docker-compose exec backend pytest
-```
-
-### Code Quality
-
-```bash
-# Lint TypeScript/JavaScript
-npm run lint
-
-# Type check
+# Type checking
 npm run type-check
 
-# Format Python code
-black app/
-isort app/
-
-# Lint Python code
-flake8 app/
+# Linting
+npm run lint
 ```
 
-### Database Management
+---
 
+## Troubleshooting
+
+### MongoDB Connection Timeout
+
+**Problem**: `pymongo.errors.NetworkTimeout`
+
+**Solution**:
 ```bash
-# Access MongoDB shell (if using local MongoDB)
-mongosh "mongodb+srv://cluster.mongodb.net/" --username your_username
-
-# Backup database
-mongodump --uri="mongodb+srv://..." --out=./backup
-
-# Restore database
-mongorestore --uri="mongodb+srv://..." ./backup
-
-# Clear Redis cache
-redis-cli FLUSHALL
+# Check MongoDB URI in .env
+# Ensure firewall allows connection
+# Whitelist IP in MongoDB Atlas
+# Increase timeout in .env:
+MONGODB_URI=mongodb+srv://...?serverSelectionTimeoutMS=5000
 ```
 
-### Adding a New Scraper
+### Redis Connection Refused
 
-1. Create new scraper file in `app/scrapers/`:
-```python
-from app.scrapers.base import BaseScraper
+**Problem**: `ConnectionRefusedError`
 
-class NewSourceScraper(BaseScraper):
-    def __init__(self):
-        super().__init__(source_name="new_source")
-    
-    async def scrape(self):
-        # Implementation
-        pass
+**Solution**:
+```bash
+# Start Redis
+docker-compose up -d redis
+
+# Verify connection
+redis-cli ping  # Should return PONG
 ```
 
-2. Register scraper in `app/tasks/scraping_tasks.py`
-3. Add configuration in `.env`
-4. Update documentation
+### Celery Tasks Not Running
+
+**Problem**: Tasks stuck in queue
+
+**Solution**:
+```bash
+# Start worker
+celery -A app.tasks.celery_app worker --loglevel=info
+
+# Start scheduler
+celery -A app.tasks.celery_app beat --loglevel=info
+
+# Check status
+celery -A app.tasks.celery_app inspect active
+```
+
+### Port Already in Use
+
+**Problem**: `Error: listen EADDRINUSE :::3000`
+
+**Solution**:
+```bash
+# Windows: Find and kill process on port 3000
+taskkill /PID <pid> /F
+# Or use different port
+npm run dev -- -p 3001
+```
+
+### API Returns 404
+
+**Problem**: Endpoint not found
+
+**Solution**:
+- Check endpoint exists in app/routes/
+- Verify correct URL and HTTP method
+- Check CORS configuration in app/main.py
+- Ensure backend is running on port 8000
+
+---
 
 ## Contributing
 
-Contributions are welcome and appreciated. Please follow these guidelines:
+### Workflow
 
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. Make your changes following the coding standards
+1. Fork repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Make changes following code standards
 4. Write tests for new functionality
-5. Ensure all tests pass:
-   ```bash
-   pytest
-   npm run lint
-   npm run type-check
-   ```
-6. Commit with descriptive messages:
-   ```bash
-   git commit -m "feat: add new dataset quality metric"
-   ```
-7. Push to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-8. Open a Pull Request with:
-   - Clear description of changes
-   - Link to related issues
-   - Screenshots for UI changes
+5. Run `pytest` and `npm run lint`
+6. Commit: `git commit -m "feat: description"`
+7. Push: `git push origin feature/amazing-feature`
+8. Open Pull Request
 
-### Coding Standards
+### Code Standards
 
-**Python**:
-- Follow PEP 8 style guide
-- Use type hints for function signatures
-- Write docstrings for classes and functions
-- Maximum line length: 100 characters
+- **Python**: PEP 8, type hints, comprehensive docstrings
+- **TypeScript**: ESLint, Prettier, functional components
+- **Maximum line length**: 100 characters
+- **Naming**: Descriptive names, avoid abbreviations
+- **Tests**: Write tests for new features and bug fixes
 
-**TypeScript/React**:
-- Use functional components with hooks
-- Follow Airbnb React style guide
-- Use TypeScript for type safety
-- Use Tailwind CSS for styling
+### Pull Request Template
 
-### Reporting Issues
+- Clear description of changes made
+- Link to related issues
+- Screenshots for UI changes
+- Test results and coverage
+- Note any breaking changes
 
-When reporting bugs, include:
-- Operating system and version
-- Python and Node.js versions
-- Steps to reproduce
-- Expected vs actual behavior
-- Error messages and logs
+---
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
-### Third-Party Licenses
+## Support & Community
 
-This project uses various open-source packages. See individual package licenses in:
-- Python dependencies: `requirements.txt`
-- Node.js dependencies: `package.json`
+- **Issues**: [GitHub Issues](https://github.com/Shamil-S-Khan/DataVault/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Shamil-S-Khan/DataVault/discussions)
+- **Documentation**: See [docs/](docs/) folder
+- **Contact**: Project maintainer
 
-## Contact & Support
+---
 
-- **Repository**: https://github.com/Shamil-S-Khan/DataVault
-- **Issues**: https://github.com/Shamil-S-Khan/DataVault/issues
-- **Documentation**: See `/docs` directory
-
-## Acknowledgments
-
-DataVault is built with and depends on excellent open-source projects:
-
-- **Data Sources**: HuggingFace, Kaggle, Papers with Code, OpenML, Zenodo, Data.gov, AWS Open Data, Harvard Dataverse
-- **AI/ML Models**: Google Gemini, Sentence Transformers, HuggingFace Transformers
-- **Infrastructure**: MongoDB Atlas (free tier), Upstash Redis (free tier)
-- **Frameworks**: Next.js, FastAPI, Celery
+**Status**: Production Ready ✓  
+**Version**: 1.0.0  
+**Last Updated**: June 22, 2026
